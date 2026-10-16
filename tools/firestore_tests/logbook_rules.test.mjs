@@ -559,3 +559,226 @@ test('phase05 dashboard count and batch productivity query contracts', async () 
   await assertSucceeds(getDocs(query(collection(db, 'production_results'), where('moduleType', '==', 'lele'),
     where('batchId', '==', 'cycle'), where('harvestDate', '>=', now), orderBy('harvestDate', 'desc'), limit(501))));
 });
+
+// Phase 06: client SDK contracts, with rules active for all four sale writes.
+async function seedHarvest(stock = 20, patch = {}) {
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'inventory/harvest'), {
+    ...stockData('harvest', stock), name: 'Lele Panen', itemKey: 'lele_panen',
+    category: 'hasil_panen', productType: 'harvest', isSellable: true, ...patch}));
+}
+function saleWrites(db, uid, id, before, {quantity = 5, unitPrice = 25000, salePatch = {}, ledgerPatch = {},
+  financePatch = {}, itemPatch = {}, omit = ''} = {}) {
+  const lid = `sale_${id}`, total = Math.round(quantity * unitPrice);
+  const sale = {id, requestId: id, saleNumber: `S-${id}`, creationPayload: JSON.stringify([quantity, unitPrice]),
+    inventoryItemId: 'harvest', productName: 'Lele Panen', moduleType: 'lele', quantity,
+    quantityMilli: Math.round(quantity * 1000), unit: 'kg', unitPrice, totalAmount: total,
+    buyerName: '', paymentMethod: 'tunai', saleDate: now, notes: '', status: 'paid',
+    inventoryTransactionId: lid, financeTransactionId: lid, createdBy: uid, updatedBy: uid,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...salePatch};
+  const ledger = {id: lid, requestId: id, saleId: id, itemId: 'harvest', itemName: 'Lele Panen',
+    itemKey: 'lele_panen', moduleType: 'lele', type: 'out', source: 'sale', quantity, unit: 'kg',
+    beforeStock: before, afterStock: before - quantity, notes: `Penjualan S-${id}`,
+    transactionDate: serverTimestamp(), createdAt: serverTimestamp(), createdBy: uid, isReversed: false, ...ledgerPatch};
+  const finance = {id: lid, requestId: id, saleId: id, source: 'sale', type: 'income',
+    category: 'Penjualan hasil panen', amount: total, date: now, description: `Penjualan S-${id}`,
+    notes: `Penjualan S-${id}`, paymentMethod: 'tunai', moduleType: 'lele', isDeleted: false,
+    version: 0, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...financePatch};
+  const stock = {currentStock: before - quantity, isLowStock: before - quantity <= 5,
+    lastTransactionId: lid, updatedBy: uid, updatedAt: serverTimestamp(), ...itemPatch};
+  return writer => {
+    if (omit !== 'sale') writer.set(doc(db, `sales/${id}`), sale);
+    if (omit !== 'stock') writer.update(doc(db, 'inventory/harvest'), stock);
+    if (omit !== 'ledger') writer.set(doc(db, `inventory_transactions/${lid}`), ledger);
+    if (omit !== 'finance') writer.set(doc(db, `finance_transactions/${lid}`), finance);
+  };
+}
+async function commitSale(id, options = {}, uid = 'admin') {
+  const db = dbFor(uid);
+  return retryTransaction(db, async tx => {
+    await tx.get(doc(db, `users/${uid}`));
+    const prior = await tx.get(doc(db, `sales/${id}`));
+    const payload = JSON.stringify([options.quantity ?? 5, options.unitPrice ?? 25000]);
+    if (prior.exists()) { if (prior.data().creationPayload !== payload) throw Error('payload conflict'); return id; }
+    const stock = await tx.get(doc(db, 'inventory/harvest'));
+    await tx.get(doc(db, `inventory_transactions/sale_${id}`));
+    await tx.get(doc(db, `finance_transactions/sale_${id}`));
+    if (stock.data().currentStock < (options.quantity ?? 5)) throw Error('insufficient stock');
+    saleWrites(db, uid, id, stock.data().currentStock, options)(tx); return id;
+  });
+}
+test('phase06 sale 20kg - 5kg - 8kg = 7kg, income once, no production write', async () => {
+  await seedHarvest();
+  await commitSale('one'); await commitSale('two', {quantity: 8}); await commitSale('one');
+  const db = dbFor('admin');
+  assert.equal((await getDoc(doc(db, 'inventory/harvest'))).data().currentStock, 7);
+  assert.equal((await getDocs(collection(db, 'sales'))).size, 2);
+  const cash = await getDocs(collection(db, 'finance_transactions'));
+  assert.equal(cash.docs.reduce((sum,d) => sum+d.data().amount, 0), 325000);
+  assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 2);
+  assert.equal((await getDocs(collection(db, 'production_results'))).size, 0);
+  await assert.rejects(commitSale('one', {quantity: 6}));
+});
+test('phase06 concurrent sale of 8 from 10kg allows only one paid receipt', async () => {
+  await seedHarvest(10);
+  const results = await Promise.allSettled([commitSale('race1', {quantity: 8}), commitSale('race2', {quantity: 8})]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal((await getDoc(doc(dbFor('admin'), 'inventory/harvest'))).data().currentStock, 2);
+  assert.equal((await getDocs(collection(dbFor('admin'), 'finance_transactions'))).size, 1);
+});
+test('phase06 same simultaneous request has one stock decrement and receipt', async () => {
+  await seedHarvest();
+  await Promise.all([commitSale('same'), commitSale('same')]);
+  assert.equal((await getDoc(doc(dbFor('admin'), 'inventory/harvest'))).data().currentStock, 15);
+  assert.equal((await getDocs(collection(dbFor('admin'), 'sales'))).size, 1);
+});
+for (const omit of ['sale','stock','ledger','finance']) {
+  test(`phase06 missing ${omit} fails without partial writes`, async () => {
+    await seedHarvest(); const db = dbFor('admin'), batch = writeBatch(db);
+    saleWrites(db, 'admin', 'partial', 20, {omit})(batch);
+    await assertFails(batch.commit());
+    assert.equal((await getDoc(doc(db, 'inventory/harvest'))).data().currentStock, 20);
+    assert.equal((await getDocs(collection(db, 'sales'))).size, 0);
+    assert.equal((await getDocs(collection(db, 'finance_transactions'))).size, 0);
+  });
+}
+for (const [label, options] of Object.entries({
+  total: {salePatch: {totalAmount: 1}}, quantity: {salePatch: {quantity: -1}},
+  price: {salePatch: {unitPrice: 0}}, infinity: {salePatch: {quantity: Infinity}},
+  nan: {salePatch: {quantity: NaN}}, precision: {salePatch: {quantityMilli: 5001}},
+  unit: {salePatch: {unit: 'liter'}}, actor: {salePatch: {createdBy: 'field'}},
+  status: {salePatch: {status: 'pending'}}, provenance: {salePatch: {batchId: 'invented'}},
+  ledgerLink: {ledgerPatch: {saleId: 'missing'}}, income: {financePatch: {amount: 1}},
+  financeType: {financePatch: {type: 'expense'}}, financeDate: {financePatch: {date: Timestamp.fromMillis(1)}},
+  ledgerSource: {ledgerPatch: {source: 'manual', requestedValue: 5, allowNegative: false}},
+  sameBalance: {itemPatch: {currentStock: 20}}, financialActor: {financePatch: {createdBy: 'field'}},
+})) test(`phase06 SDK tampering ${label} rejected atomically`, async () => {
+  await seedHarvest(); const db = dbFor('admin'), batch = writeBatch(db);
+  saleWrites(db, 'admin', 'tampered', 20, options)(batch); await assertFails(batch.commit());
+  assert.equal((await getDoc(doc(db, 'inventory/harvest'))).data().currentStock, 20);
+});
+for (const uid of ['field', 'finance', 'reader', 'inactive']) {
+  test(`phase06 ${uid} cannot create integrated sales`, async () => {
+    await seedHarvest(); const db = dbFor(uid), batch = writeBatch(db);
+    saleWrites(db, uid, 'no-role', 20)(batch); await assertFails(batch.commit());
+    if (uid !== 'finance') await assertFails(getDocs(collection(db, 'sales')));
+    else await assertSucceeds(getDocs(collection(db, 'sales')));
+  });
+}
+test('phase06 unpaid/non-harvest/unclassified/deleted product and oversell rejected via SDK', async () => {
+  const db = dbFor('admin');
+  for (const patch of [{isSellable:false}, {productType:'operational'}, {isDeleted:true}]) {
+    await seedHarvest(20, patch); const batch = writeBatch(db);
+    saleWrites(db, 'admin', 'invalid-product', 20)(batch); await assertFails(batch.commit());
+  }
+  await seedHarvest(2); const batch = writeBatch(db);
+  saleWrites(db, 'admin', 'negative', 2)(batch); await assertFails(batch.commit());
+});
+test('phase06 completed sales, sale ledger and linked finance are immutable even for admin', async () => {
+  await seedHarvest(); await commitSale('permanent'); const db = dbFor('admin');
+  for (const path of ['sales/permanent','inventory_transactions/sale_permanent','finance_transactions/sale_permanent']) {
+    await assertFails(updateDoc(doc(db,path), {notes: 'edited', updatedBy:'admin', updatedAt:serverTimestamp()}));
+    await assertFails(deleteDoc(doc(db,path)));
+  }
+  await assertFails(updateDoc(doc(db,'finance_transactions/sale_permanent'), {isDeleted:true, updatedBy:'admin',updatedAt:serverTimestamp()}));
+});
+test('phase06 classification admin only; field cannot mark feed saleable', async () => {
+  await seedStock();
+  await assertFails(updateDoc(doc(dbFor('field'), 'inventory/feed'), {isSellable:true, productType:'harvest', updatedBy:'field',updatedAt:serverTimestamp()}));
+  await assertSucceeds(updateDoc(doc(dbFor('admin'), 'inventory/feed'), {isSellable:true, productType:'harvest', updatedBy:'admin',updatedAt:serverTimestamp()}));
+});
+function manualCash(id, uid='finance', patch={}) {
+  return {id,requestId:id,source:'manual',creationPayload:'payload',version:0,type:'expense',category:'Pakan',
+    amount:50000,date:now,description:'',notes:'',paymentMethod:'tunai',moduleType:'lele',isDeleted:false,
+    createdBy:uid,updatedBy:uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),...patch};
+}
+async function cashEdit(db, id, editId='edit', patch={amount:60000}) {
+  const ref = doc(db,`finance_transactions/${id}`), old = (await getDoc(ref)).data();
+  const after = {...old,...patch,version:(old.version??0)+1,lastEditId:editId,updatedBy:'finance',updatedAt:serverTimestamp()};
+  const batch=writeBatch(db);
+  batch.set(doc(db,`finance_transactions/${id}/edits/${editId}`),{before:old,after,payload:'edit',editedBy:'finance',editedAt:serverTimestamp()});
+  batch.set(ref,after); return batch.commit();
+}
+test('phase06 manual income/expense audit, immutable history and soft delete', async()=>{
+  const db=dbFor('finance');
+  await assertSucceeds(setDoc(doc(db,'finance_transactions/manual'),manualCash('manual')));
+  await assertSucceeds(setDoc(doc(db,'finance_transactions/income'),manualCash('income','finance',{type:'income'})));
+  await assertFails(updateDoc(doc(db,'finance_transactions/manual'),{amount:60000,updatedBy:'finance',updatedAt:serverTimestamp()}));
+  await assertSucceeds(cashEdit(db,'manual'));
+  await assertFails(updateDoc(doc(db,'finance_transactions/manual/edits/edit'),{payload:'forged'}));
+  await assertFails(deleteDoc(doc(db,'finance_transactions/manual')));
+  await assertSucceeds(cashEdit(db,'manual','delete',{isDeleted:true}));
+  await assertFails(cashEdit(db,'manual','restore',{isDeleted:false}));
+});
+for (const amount of [0,-1,NaN,Infinity,1e13]) test(`phase06 finance invalid amount ${amount}`,async()=>{
+  await assertFails(setDoc(doc(dbFor('finance'),'finance_transactions/invalid'),manualCash('invalid','finance',{amount})));
+});
+test('phase06 manual receipt cannot bypass actor, request or sale pairing',async()=>{
+  const db=dbFor('finance');
+  for(const patch of [{createdBy:'admin'},{requestId:'different'},{source:'sale',saleId:'none'},{saleId:'none'},{isSampleData:true}]) {
+    await assertFails(setDoc(doc(db,'finance_transactions/forged'),manualCash('forged','finance',patch)));
+  }
+});
+const actualFlow=(id='flow',patch={})=>({id,requestId:id,creationPayload:'flow-payload',
+  sourceModuleType:'cacing_tanah',destinationModuleType:'tanaman',materialName:'Kascing',
+  quantity:3,unit:'kg',flowDate:now,sourceType:'manual',notes:'Aktual',createdBy:'field',createdAt:serverTimestamp(),...patch});
+test('phase06 actual flow append-only without stock mutation; legacy remains readable',async()=>{
+  const db=dbFor('field'); await seedStock();
+  await assertSucceeds(setDoc(doc(db,'circular_flows/flow'),actualFlow()));
+  assert.equal((await getDoc(doc(db,'inventory/feed'))).data().currentStock,20);
+  assert.equal((await getDocs(collection(db,'inventory_transactions'))).size,0);
+  await assertFails(updateDoc(doc(db,'circular_flows/flow'),{quantity:4}));
+  await assertFails(deleteDoc(doc(dbFor('admin'),'circular_flows/flow')));
+  await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'circular_flows/legacy'),{materialName:'Lama'}));
+  await assertSucceeds(getDoc(doc(db,'circular_flows/legacy')));
+});
+for(const [label,patch] of Object.entries({zero:{quantity:0},negative:{quantity:-1},nan:{quantity:NaN},
+  infinite:{quantity:Infinity},module:{sourceModuleType:'invalid'},same:{sourceModuleType:'tanaman'},
+  unit:{unit:'invalid'},actor:{createdBy:'admin'},source:{sourceType:'concept'},
+  missingBatch:{sourceBatchId:'missing'},wrongLog:{logbookId:'entry'},ledger:{inventoryTransactionId:'missing'}})) {
+  test(`phase06 invalid circular ${label} denied`,async()=>{
+    await assertFails(setDoc(doc(dbFor('field'),'circular_flows/flow'),actualFlow('flow',patch)));
+  });
+}
+for(const uid of ['finance','reader','inactive']) test(`phase06 flow writer ${uid} denied`,async()=>{
+  await assertFails(setDoc(doc(dbFor(uid),'circular_flows/flow'),actualFlow('flow',{createdBy:uid})));
+});
+test('phase06 sales finance and circular filtered pagination contracts',async()=>{
+  const admin=dbFor('admin'); await seedHarvest(200);
+  for(let i=0;i<22;i++) await commitSale(`page-${i}`);
+  const q=query(collection(admin,'sales'),where('moduleType','==','lele'),where('saleDate','>=',now),orderBy('saleDate','desc'),limit(20));
+  const first=await getDocs(q),second=await getDocs(query(q,startAfter(first.docs.at(-1))));
+  assert.equal(first.size,20);assert.equal(second.size,2);
+  await assertSucceeds(getDocs(query(collection(admin,'finance_transactions'),where('isDeleted','==',false),where('type','==','income'),where('category','==','Penjualan hasil panen'),where('moduleType','==','lele'),orderBy('date','desc'),limit(20))));
+  await assertSucceeds(getDocs(query(collection(admin,'circular_flows'),where('sourceModuleType','==','cacing_tanah'),where('destinationModuleType','==','tanaman'),where('materialName','==','Kascing'),orderBy('flowDate','desc'),limit(20))));
+});
+
+test('phase06 decimal quantity rounds half Rupiah up, while sample product is rejected',async()=>{
+  await seedHarvest();await assertSucceeds(commitSale('round',{quantity:0.125,unitPrice:12}));
+  assert.equal((await getDoc(doc(dbFor('admin'),'finance_transactions/sale_round'))).data().amount,2);
+  assert.equal((await getDoc(doc(dbFor('admin'),'inventory/harvest'))).data().currentStock,19.875);
+  await seedHarvest(20,{isSampleData:true});await assert.rejects(commitSale('sample'));
+});
+test('phase06 valid flow ledger reference remains append-only without duplicate stock',async()=>{
+  await seedStock();
+  await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'inventory_transactions/actual'),{
+    moduleType:'cacing_tanah',quantity:3,unit:'kg',isReversed:false,createdBy:'field'}));
+  await assertSucceeds(setDoc(doc(dbFor('field'),'circular_flows/flow'),actualFlow('flow',{inventoryTransactionId:'actual'})));
+  assert.equal((await getDocs(collection(dbFor('field'),'inventory_transactions'))).size,1);
+  assert.equal((await getDoc(doc(dbFor('field'),'inventory/feed'))).data().currentStock,20);
+});
+test('phase06 flow rejects sampled reference, wrong batch and forged actor display name',async()=>{
+  await seedBatch();const db=dbFor('field');
+  await assertFails(setDoc(doc(db,'circular_flows/flow'),actualFlow('flow',{sourceBatchId:'KOLAM-A'})));
+  await assertFails(setDoc(doc(db,'circular_flows/flow'),actualFlow('flow',{createdByName:'Admin'})));
+  await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'inventory_transactions/sample'),{
+    moduleType:'cacing_tanah',quantity:3,unit:'kg',isReversed:false,createdBy:'sample_seed'}));
+  await assertFails(setDoc(doc(db,'circular_flows/flow'),actualFlow('flow',{inventoryTransactionId:'sample'})));
+});
+test('phase06 finance cannot manufacture orphan audit or initial edit pointer',async()=>{
+  const db=dbFor('finance');
+  await assertFails(setDoc(doc(db,'finance_transactions/initial'),manualCash('initial','finance',{lastEditId:'forged'})));
+  await setDoc(doc(db,'finance_transactions/manual'),manualCash('manual'));
+  const old=(await getDoc(doc(db,'finance_transactions/manual'))).data();
+  await assertFails(setDoc(doc(db,'finance_transactions/manual/edits/orphan'),{
+    before:old,after:old,payload:'forged',editedBy:'finance',editedAt:serverTimestamp()}));
+});

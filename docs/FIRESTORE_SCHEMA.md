@@ -397,3 +397,21 @@ Tidak menambah collection summary/cache, field persistent, seed, atau operasi tu
 Pengamatan Tanaman dipisahkan berdasarkan batch, komoditas, blok dan tanggal tanam; identitas legacy tidak cukup hanya ditampilkan sebagai titik catatan tersendiri. Field Lele `mortalitas_ikan` mengikuti label form **Bobot Rata-rata**, sedangkan `pakan_lele_kg` berarti **Pakan Maggot Sore**. `kondisi_air` dibaca sebagai survival rate hanya untuk nilai numerik 0–100 sesuai form terkini.
 
 Rumus, periode lokal [start,end), query bounded dan risiko legacy dijelaskan pada [Phase 05](PHASE_05_DASHBOARD_MONITORING.md).
+# Tambahan Phase 06 — Finance, Sales, Actual Circular Flow
+
+Kontrak existing tetap berlaku; field tambahan tidak memerlukan migrasi otomatis pada dokumen lama.
+
+| Collection | Field/kontrak baru |
+| --- | --- |
+| inventory | `isSellable` bool default false, `productType` operational/harvest default operational. Hanya admin mengubah klasifikasi jual. Barang jual wajib harvest, modul canonical, aktif dan bukan data sampel. Saldo tetap currentStock; tidak membuat collection saldo baru. |
+| sales | ID=requestId; saleNumber S-ID; creationPayload immutable; inventoryItemId/productName/moduleType; quantity/quantityMilli/unit; integer unitPrice/totalAmount; buyerName opsional (string kosong bila tidak dicatat), paymentMethod tunai/transfer/qris; saleDate; notes; status paid; inventoryTransactionId/financeTransactionId sale_ID; createdBy/createdByName/createdAt, updatedBy/updatedAt. Receipt immutable. Tidak mengisi batchId dari stok gabungan tanpa provenance. |
+| inventory_transactions | source sale, saleId/requestId=receiptID, ID sale_receiptID, type out, quantity/unit, beforeStock/afterStock, aktor/waktu dan field master existing. Tidak menyimpan nominal finance pada ledger yang dapat dibaca role operasional. |
+| finance_transactions | Manual baru: ID=requestId, source manual, creationPayload asli, version0. Sale: ID sale_receiptID, source sale, saleId/requestId, type income, amount=integer total sale (parser FinanceRecord tetap double kompatibel), date/paymentMethod/moduleType mengikuti receipt. Kedua jenis memakai server timestamps/audit dan isDeleted. |
+| finance_transactions/{id}/edits/{requestId} | before/after snapshot penuh, payload, editedBy/editedAt. Parent manual menaikkan version, lastEditId, updatedBy/At dalam write atomik yang sama. Histori append-only, soft delete disimpan sebagai after.isDeleted=true. |
+| circular_flows | ID/requestId, creationPayload; sourceModuleType/destinationModuleType berbeda; materialName, quantity finite positif, unit kg/g/liter/ml/butir/ekor, flowDate, notes, sourceType manual, createdBy/createdByName/createdAt. sourceBatchId/destinationBatchId/logbookId/inventoryTransactionId opsional. Append-only, tidak menulis stok. |
+
+Quantity sale dinormalisasi ke thousandths (maksimal1e6 unit). Total Rupiah dihitung half-up sekali: round(quantityMilli × unitPrice /1000), total positif maksimal1e12 dan unitPrice positif maksimal1e9. Payload menyertakan waktu sampai presisi microsecond DateTime, aktor, semua nilai input dan referensi; retry dengan input berbeda ditolak meskipun tanggal hanya berbeda satu microsecond. Field createdByName bersumber dari profil yang dibaca dalam transaction dan diverifikasi Rules bila disertakan.
+
+Aliran legacy tanpa sourceType/aktor tetap dapat diparsing, tetapi tidak dianggap bukti aliran aktual. Aliran manual memverifikasi batch sesuai modul, Logbook aktif/tidak dihapus, ledger jumlah/satuan/modul dan tidak reversed, serta menolak referensi sampel. Tidak menduplikasi saldo/panen/pemasukan.
+
+Lihat [Phase 06](PHASE_06_FINANCE_SALES_CIRCULAR_FLOW.md) dan [audit sampel](PHASE_06_SAMPLE_DATA_CLEANUP.md). Produksi belum diaudit/diubah dan Rules/index belum dideploy.

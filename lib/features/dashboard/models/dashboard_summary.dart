@@ -77,6 +77,9 @@ class DashboardCircularFlow {
 
 class DashboardSummary {
   const DashboardSummary({
+    this.salesTotal,
+    this.soldQuantities = const {},
+    this.salesError,
     required this.activeModuleCount,
     required this.todayLogCount,
     required this.todayScheduleCount,
@@ -101,6 +104,9 @@ class DashboardSummary {
     this.updatedAt,
   });
 
+  final int? salesTotal;
+  final Map<String, double> soldQuantities;
+  final Object? salesError;
   final int activeModuleCount;
   final int todayLogCount;
   final int todayScheduleCount;

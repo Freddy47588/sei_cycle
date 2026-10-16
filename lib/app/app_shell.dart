@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import '../features/dashboard/screen/dashboard_screen.dart';
 import '../features/education/screen/education_screen.dart';
 import '../features/finance/screen/finance_screen.dart';
+import '../features/sales/screen/sales_screen.dart';
+import '../features/circular_flow/screen/circular_flow_screen.dart';
 import '../features/inventory/screen/inventory_screen.dart';
 import '../features/logbook/screen/logbook_screen.dart';
 import '../features/notification/screen/notification_screen.dart';
@@ -37,6 +39,9 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   ReminderSyncService? _reminderSync;
   int _selectedIndex = 0;
+  bool _logbookVisited = false;
+  Widget? _injectedDraftPage;
+  GlobalKey _draftKey = GlobalKey();
   late final Stream<int> _unreadCountStream;
 
   @override
@@ -53,6 +58,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           userId: widget.profile.uid,
           role: widget.profile.effectiveRole,
         );
+  }
+
+  @override
+  void didUpdateWidget(covariant AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profile.uid != widget.profile.uid ||
+        !widget.profile.isActive) {
+      _draftKey = GlobalKey();
+      _logbookVisited = false;
+      _injectedDraftPage = null;
+      _selectedIndex = 0;
+    }
   }
 
   Future<void> _syncReminders() async {
@@ -147,11 +164,32 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       selectedIcon: Icons.person_rounded,
       builder: () => ProfileScreen(profile: widget.profile),
     ),
+    if (widget.profile.canViewSales)
+      _Destination(
+        label: 'Penjualan',
+        icon: Icons.point_of_sale_outlined,
+        selectedIcon: Icons.point_of_sale,
+        builder: () => SalesScreen(profile: widget.profile),
+      ),
+    if (widget.profile.canViewCircularFlows)
+      _Destination(
+        label: 'Aliran Nutrisi',
+        icon: Icons.recycling_outlined,
+        selectedIcon: Icons.recycling,
+        builder: () => CircularFlowScreen(profile: widget.profile),
+      ),
   ];
 
   void _select(int index) {
     if (index == _selectedIndex) return;
-    setState(() => _selectedIndex = index);
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _selectedIndex = index;
+      if (_destinations[index].label == 'Logbook') {
+        _logbookVisited = true;
+        _injectedDraftPage ??= widget.pageBuilder?.call('Logbook');
+      }
+    });
   }
 
   @override
@@ -166,9 +204,28 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         final unreadCount = snapshot.data ?? 0;
         return LayoutBuilder(
           builder: (context, constraints) {
-            final content =
-                widget.pageBuilder?.call(destinations[_selectedIndex].label) ??
-                destinations[_selectedIndex].builder();
+            final isLogbook = destinations[_selectedIndex].label == 'Logbook';
+            final content = IndexedStack(
+              index: isLogbook ? 0 : 1,
+              children: [
+                TickerMode(
+                  enabled: isLogbook,
+                  child: KeyedSubtree(
+                    key: _draftKey,
+                    child: _logbookVisited && widget.profile.canViewLogbooks
+                        ? _injectedDraftPage ??
+                              LogbookScreen(profile: widget.profile)
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+                isLogbook
+                    ? const SizedBox.shrink()
+                    : widget.pageBuilder?.call(
+                            destinations[_selectedIndex].label,
+                          ) ??
+                          destinations[_selectedIndex].builder(),
+              ],
+            );
             if (constraints.maxWidth >= AppBreakpoints.desktop) {
               return _DesktopShell(
                 profile: widget.profile,

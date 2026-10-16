@@ -49,6 +49,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => InventoryMasterForm(
+        canClassify: widget.profile.isActive && widget.profile.isAdmin,
         service: _service,
         userId: widget.profile.uid,
         item: item,
@@ -181,7 +182,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 TextField(
                   controller: _category,
                   decoration: InputDecoration(
-                    labelText: 'Kategori (persis)',
+                    labelText: 'Kategori Barang',
                     suffixIcon: IconButton(
                       tooltip: 'Terapkan kategori',
                       onPressed: () => setState(
@@ -201,7 +202,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 DropdownButtonFormField<String>(
                   initialValue: _stock,
                   decoration: const InputDecoration(
-                    labelText: 'Status stok dimuat',
+                    labelText: 'Filter Status Stok',
                   ),
                   items: const [
                     DropdownMenuItem(value: 'all', child: Text('Semua Barang')),

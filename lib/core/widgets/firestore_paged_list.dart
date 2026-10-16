@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/firestore_page.dart';
 import 'async_state_widgets.dart';
+import '../utils/operation_error.dart';
 
 /// A cursor and loaded rows belong to one query generation, never to a build.
 class FirestorePagedList<T> extends StatefulWidget {
@@ -10,12 +11,14 @@ class FirestorePagedList<T> extends StatefulWidget {
     required this.queryKey,
     required this.load,
     required this.itemBuilder,
+    this.header,
     this.transform,
     this.onLoaded,
     this.idOf,
     this.watchPage,
     super.key,
   });
+  final Widget? header;
   final String Function(T)? idOf;
   final Stream<List<T>> Function(List<T> items)? watchPage;
   final Object queryKey;
@@ -135,15 +138,19 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
 
   @override
   Widget build(BuildContext context) {
-    if (_busy && _items.isEmpty) return const LoadingState();
-    if (_error != null && _items.isEmpty) {
-      return ErrorState(message: '$_error', onRetry: _fetch);
+    if (_busy && _items.isEmpty && widget.header == null) {
+      return const LoadingState();
+    }
+    if (_error != null && _items.isEmpty && widget.header == null) {
+      return ErrorState(message: operationError(_error!), onRetry: _fetch);
     }
     final visible = widget.transform?.call(List.of(_items)) ?? _items;
     return RefreshIndicator(
       onRefresh: _reset,
       child: ListView(
         children: [
+          if (widget.header != null) _PagedHeader(child: widget.header!),
+          if (_busy && _items.isEmpty) const LoadingState(),
           if (_liveError != null)
             const Text(
               'Pembaruan stok terhenti. Muat ulang untuk mencoba lagi.',
@@ -166,7 +173,7 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
               padding: const EdgeInsets.only(bottom: 10),
               child: widget.itemBuilder(item),
             ),
-          if (_error != null) Text('Gagal memuat: $_error'),
+          if (_error != null) Text(operationError(_error!)),
           if (_more || _error != null)
             OutlinedButton(
               onPressed: _busy ? null : _fetch,
@@ -182,5 +189,25 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
         ],
       ),
     );
+  }
+}
+
+/// Keep filter text, selections and expansion state when a long list scrolls
+/// its header out of view. State still belongs to this page/account instance.
+class _PagedHeader extends StatefulWidget {
+  const _PagedHeader({required this.child});
+  final Widget child;
+  @override
+  State<_PagedHeader> createState() => _PagedHeaderState();
+}
+
+class _PagedHeaderState extends State<_PagedHeader>
+    with AutomaticKeepAliveClientMixin<_PagedHeader> {
+  @override
+  bool get wantKeepAlive => true;
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }

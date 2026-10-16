@@ -4,6 +4,14 @@ import '../../../core/utils/firestore_fields.dart';
 
 class CircularFlow {
   const CircularFlow({
+    this.createdByName = '',
+    this.createdBy = '',
+    this.sourceType = 'legacy',
+    this.sourceBatchId,
+    this.destinationBatchId,
+    this.logbookId,
+    this.inventoryTransactionId,
+    this.isSampleData = false,
     required this.id,
     required this.sourceModuleType,
     required this.destinationModuleType,
@@ -15,6 +23,15 @@ class CircularFlow {
     required this.createdAt,
   });
 
+  final String createdByName;
+  final String createdBy, sourceType;
+  final String? sourceBatchId,
+      destinationBatchId,
+      logbookId,
+      inventoryTransactionId;
+  final bool isSampleData;
+  bool get isActual =>
+      sourceType == 'manual' && createdBy.isNotEmpty && !isSampleData;
   final String id;
   final String sourceModuleType;
   final String destinationModuleType;
@@ -30,6 +47,17 @@ class CircularFlow {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return CircularFlow(
+      createdByName: stringField(data, const ['createdByName']),
+      createdBy: stringField(data, const ['createdBy']),
+      sourceType: stringField(data, const ['sourceType'], fallback: 'legacy'),
+      sourceBatchId: data['sourceBatchId'] as String?,
+      destinationBatchId: data['destinationBatchId'] as String?,
+      logbookId: data['logbookId'] as String?,
+      inventoryTransactionId: data['inventoryTransactionId'] as String?,
+      isSampleData:
+          data['isSampleData'] == true ||
+          data['createdBy'] == 'sample_seed' ||
+          data['sampleVersion'] == 'v2',
       id: stringField(data, const ['id'], fallback: document.id),
       sourceModuleType: stringField(data, const ['sourceModuleType']),
       destinationModuleType: stringField(data, const ['destinationModuleType']),
@@ -44,6 +72,13 @@ class CircularFlow {
 
   Map<String, dynamic> toFirestore() {
     return {
+      'createdBy': createdBy,
+      'sourceType': sourceType,
+      if (sourceBatchId != null) 'sourceBatchId': sourceBatchId,
+      if (destinationBatchId != null) 'destinationBatchId': destinationBatchId,
+      if (logbookId != null) 'logbookId': logbookId,
+      if (inventoryTransactionId != null)
+        'inventoryTransactionId': inventoryTransactionId,
       'id': id,
       'sourceModuleType': sourceModuleType,
       'destinationModuleType': destinationModuleType,

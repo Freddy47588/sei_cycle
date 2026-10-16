@@ -142,7 +142,7 @@ Cakupan tambahan: masuk/keluar/koreksi dan saldo awal; setiap receipt; replay/pa
 - Tidak ada recurrence, transfer/reservasi, saldo fisik per batch, reopen checklist, koreksi kuantitas/pembatalan Logbook, atau linkedLogbookId persisten.
 - Belum ada reservasi keunikan global itemKey. Duplikat legacy perlu audit/migrasi terencana; jangan menambah itemKey mapping yang sama pada dua master.
 - Dokumen legacy tanpa field query canonical masih dapat diparsing lewat ID tetapi memerlukan normalisasi terencana agar masuk query modern. Tidak ada full scan/migrasi otomatis.
-- Seeder/skrip admin lama yang menulis stok nonnol tanpa ledger akan ditolak; audit/migrasikan seeder sebelum digunakan. Tidak menyediakan bypass admin untuk mempertahankan jalur tersebut.
+> Catatan historis: fitur data sampel runtime dihapus pada Phase 06. Jangan membuat data demo pada project operasional; lihat PHASE_06_SAMPLE_DATA_CLEANUP.md.
 - Ledger bukan bukti pekerjaan fisik atau stok opname benar-benar terjadi; kebenaran operasional tetap tanggung jawab aktor yang tercatat. Koleksi produksi/finance dan sistem registrasi yang diwarisi belum diaudit ulang sebagai seluruh backend.
 - Peringatan pengguna lain tidak dihapus secara massal; pesan historisnya bertanggal dan mengarahkan pembaca memeriksa inventaris terkini. Alert pribadi direkonsiliasi saat aktor memproses data terkait.
 - Tidak ada jaminan push server, sinkronisasi reminder saat semua perangkat offline, atau jadwal occurrence otomatis ketika aplikasi tertutup.

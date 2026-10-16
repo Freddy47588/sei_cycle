@@ -7,7 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../features/reports/models/analytics_model.dart';
 
 class ExcelGenerator {
-  static Future<void> generateAndShareExcel(AnalyticsModel data) async {
+  static List<int> buildBytes(AnalyticsModel data) {
     final excel = Excel.createExcel();
     final dateFormat = DateFormat('yyyy-MM-dd');
     final currencyFormat = NumberFormat.currency(
@@ -19,21 +19,61 @@ class ExcelGenerator {
     _buildSummarySheet(excel, data, dateFormat, currencyFormat);
     _buildLogbooksSheet(excel, data, dateFormat);
     _buildInventorySheet(excel, data);
-    _buildFinanceSheet(excel, data, dateFormat);
+    if (data.financeIncluded) {
+      _buildFinanceSheet(excel, data, dateFormat);
+      final sheet = excel['Penjualan'];
+      sheet.appendRow([
+        TextCellValue('Tanggal'),
+        TextCellValue('Produk'),
+        TextCellValue('Modul'),
+        TextCellValue('Jumlah'),
+        TextCellValue('Satuan'),
+        TextCellValue('Total Rupiah'),
+      ]);
+      for (final s in data.sales) {
+        sheet.appendRow([
+          TextCellValue(dateFormat.format(s.saleDate)),
+          TextCellValue(s.productName),
+          TextCellValue(s.moduleType),
+          DoubleCellValue(s.quantity),
+          TextCellValue(s.unit),
+          IntCellValue(s.totalAmount),
+        ]);
+      }
+    }
+    final flows = excel['Aliran Aktual'];
+    flows.appendRow([
+      TextCellValue('Tanggal'),
+      TextCellValue('Material'),
+      TextCellValue('Sumber'),
+      TextCellValue('Tujuan'),
+      TextCellValue('Jumlah'),
+      TextCellValue('Satuan'),
+    ]);
+    for (final f in data.circularFlows) {
+      flows.appendRow([
+        TextCellValue(dateFormat.format(f.flowDate)),
+        TextCellValue(f.materialName),
+        TextCellValue(f.sourceModuleType),
+        TextCellValue(f.destinationModuleType),
+        DoubleCellValue(f.quantity),
+        TextCellValue(f.unit),
+      ]);
+    }
 
-    // Save and Share
+    return excel.encode() ?? (throw StateError('Ekspor Excel gagal dibuat.'));
+  }
+
+  static Future<void> generateAndShareExcel(AnalyticsModel data) async {
+    final bytes = buildBytes(data);
     final output = await getTemporaryDirectory();
     final file = File(
       '${output.path}/Laporan_SeiCycle_${DateTime.now().millisecondsSinceEpoch}.xlsx',
     );
-
-    final bytes = excel.encode();
-    if (bytes != null) {
-      await file.writeAsBytes(bytes);
-      await SharePlus.instance.share(
-        ShareParams(files: [XFile(file.path)], text: 'Laporan Excel SeiCycle'),
-      );
-    }
+    await file.writeAsBytes(bytes);
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path)], text: 'Laporan Excel SeiCycle'),
+    );
   }
 
   static void _buildSummarySheet(
@@ -61,18 +101,24 @@ class ExcelGenerator {
       TextCellValue('Item Stok Rendah'),
       IntCellValue(data.lowStockItems.length),
     ]);
-    sheet.appendRow([
-      TextCellValue('Total Pemasukan'),
-      TextCellValue(currencyFormat.format(data.totalIncome)),
-    ]);
-    sheet.appendRow([
-      TextCellValue('Total Pengeluaran'),
-      TextCellValue(currencyFormat.format(data.totalExpense)),
-    ]);
-    sheet.appendRow([
-      TextCellValue('Laba Bersih'),
-      TextCellValue(currencyFormat.format(data.profitLoss)),
-    ]);
+    if (data.financeIncluded) {
+      sheet.appendRow([
+        TextCellValue('Total Pemasukan'),
+        TextCellValue(currencyFormat.format(data.totalIncome)),
+      ]);
+    }
+    if (data.financeIncluded) {
+      sheet.appendRow([
+        TextCellValue('Total Pengeluaran'),
+        TextCellValue(currencyFormat.format(data.totalExpense)),
+      ]);
+    }
+    if (data.financeIncluded) {
+      sheet.appendRow([
+        TextCellValue('Arus Kas Bersih'),
+        TextCellValue(currencyFormat.format(data.profitLoss)),
+      ]);
+    }
   }
 
   static void _buildLogbooksSheet(

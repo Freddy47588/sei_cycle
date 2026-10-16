@@ -1,4 +1,5 @@
 abstract final class FirestoreCollections {
+  static const sales = 'sales';
   static const batches = 'batches';
   static const users = 'users';
   static const farmModules = 'farm_modules';

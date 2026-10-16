@@ -7,11 +7,13 @@ import '../services/inventory_service.dart';
 
 class InventoryMasterForm extends StatefulWidget {
   const InventoryMasterForm({
+    this.canClassify = false,
     required this.service,
     required this.userId,
     this.item,
     super.key,
   });
+  final bool canClassify;
   final InventoryService service;
   final String userId;
   final InventoryItem? item;
@@ -32,6 +34,7 @@ class _InventoryMasterFormState extends State<InventoryMasterForm> {
   );
   final _initial = TextEditingController();
   late String _module = widget.item?.moduleType ?? '';
+  late bool _sellable = widget.item?.isSellable ?? false;
   bool _saving = false;
   String? _error;
   @override
@@ -61,6 +64,7 @@ class _InventoryMasterFormState extends State<InventoryMasterForm> {
       if (item == null) {
         await widget.service.createItem(
           requestId: _requestId,
+          isSellable: _sellable,
           name: _name.text,
           itemKey: _itemKey.text,
           moduleType: _module,
@@ -76,6 +80,7 @@ class _InventoryMasterFormState extends State<InventoryMasterForm> {
       } else {
         await widget.service.saveMetadata(
           item: item,
+          isSellable: widget.canClassify ? _sellable : null,
           name: _name.text,
           category: _category.text,
           location: _location.text,
@@ -102,9 +107,21 @@ class _InventoryMasterFormState extends State<InventoryMasterForm> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (widget.canClassify)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Hasil panen layak dijual'),
+                subtitle: const Text(
+                  'Aktifkan hanya untuk produk panen aktual, bukan pakan, obat, bibit, atau alat.',
+                ),
+                value: _sellable,
+                onChanged: _saving
+                    ? null
+                    : (v) => setState(() => _sellable = v),
+              ),
             for (final (controller, label, locked) in [
               (_name, 'Nama barang', false),
-              (_itemKey, 'Item key', widget.item != null),
+              (_itemKey, 'Kode Barang', widget.item != null),
               (_category, 'Kategori', false),
               (_unit, 'Satuan', widget.item != null),
             ]) ...[
@@ -165,7 +182,7 @@ class _InventoryMasterFormState extends State<InventoryMasterForm> {
               const Padding(
                 padding: EdgeInsets.only(top: 12),
                 child: Text(
-                  'Jumlah stok berubah melalui Mutasi Stok. Item key, modul, dan satuan tetap untuk menjaga histori.',
+                  'Jumlah stok berubah melalui Mutasi Stok. Kode Barang, modul, dan satuan tetap untuk menjaga histori.',
                 ),
               ),
             if (_error != null)

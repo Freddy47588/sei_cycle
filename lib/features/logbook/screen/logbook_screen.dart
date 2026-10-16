@@ -99,6 +99,7 @@ class _LogbookScreenState extends State<LogbookScreen>
           ),
           Expanded(
             child: TabBarView(
+              key: ValueKey(widget.profile.uid),
               controller: _tabController,
               children: [
                 AyamModule(

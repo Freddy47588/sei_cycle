@@ -68,3 +68,12 @@ flutter build apk --debug
 ```
 
 Tool audit memakai Python standard library, membaca versi terkunci, memeriksa status pub.dev/repository direct, dan menghasilkan laporan JSON. Metadata yang gagal diambil tetap dicatat sebagai error; jangan menganggapnya sudah lolos. Bukti audit adalah snapshot waktu tertentu dan harus diperbarui ketika versi/dependency atau toolchain berubah.
+# Audit ulang Phase 06 — 17 Oktober 2026
+
+Toolchain tetap Flutter3.44.2/Dart3.12.2. `flutter pub get`, `flutter pub outdated` dan analyzer dijalankan sebelum coding dan quality gate akhir. **Tidak menambah, menghapus, upgrade atau override dependency.** Pubspec/lockfile serta konfigurasi Android/Firebase tidak diubah.
+
+Audit `python tools/dependency_health_audit.py --output build/phase06-dependency-health.json` memeriksa104 hosted versions terkunci dan metadata upstream resmi. Tidak ada flags discontinued/retracted/error dari auditor. Snapshot Phase06 disimpan terpisah agar bukti Phase05 tidak ditimpa: [PHASE_06_DEPENDENCY_HEALTH_SNAPSHOT.json](PHASE_06_DEPENDENCY_HEALTH_SNAPSHOT.json). Status package juga dibandingkan dengan [pub.dev cloud_firestore](https://pub.dev/packages/cloud_firestore) dan [uuid](https://pub.dev/packages/uuid); implementasi transaksi mengikuti [dokumentasi Firebase](https://firebase.google.com/docs/firestore/manage-data/transactions) dan [kondisi Rules/getAfter](https://firebase.google.com/docs/firestore/security/rules-conditions).
+
+Resolver tetap melaporkan40 upgradable terkunci dan13 constraints di bawah resolvable; itu bukan bukti deprecation. `excel` tetap memiliki risiko maintenance yang sudah dicatat. Export diuji baca ulang XLSX (uang integer dan quantity desimal), PDF berhasil dibuat, tanpa mengganti package export existing.
+
+Analyzer akhir tidak menemukan deprecated API atau lint aplikasi. Tidak ada lint ignore baru untuk menutupi deprecation. Audit ini tidak membuktikan seluruh API internal transitif/native bebas deprecation/CVE. Warning Flutter tentang aplikasi yang masih applies Kotlin Gradle Plugin tetap tampil pada build APK sukses; tidak disembunyikan atau dijadikan alasan migrasi major. Smoke test Android fisik belum dilakukan.

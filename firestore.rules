@@ -136,15 +136,16 @@ service cloud.firestore {
           'updatedBy',
           'isDeleted',
           'isSampleData',
-          'sampleVersion'
+          'sampleVersion', 'requestId', 'source', 'saleId', 'version', 'creationPayload', 'lastEditId'
         ])
         && data.id == documentId
         && data.type in ['income', 'expense']
         && data.category is string
         && data.category.size() > 0
         && data.amount is number
-        && data.amount > 0
+        && data.amount > 0 && data.amount <= 1000000000000
         && data.date is timestamp
+        && data.date >= timestamp.date(1900, 1, 1) && data.date <= timestamp.date(2200, 12, 31)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp
         && data.createdBy is string
@@ -439,6 +440,9 @@ service cloud.firestore {
         && d.unit is string && d.unit.size() > 0
         && finiteStock(d.currentStock) && finiteStock(d.minStock) && d.minStock >= 0
         && d.isLowStock == (d.currentStock <= d.minStock)
+        && d.get('productType', 'operational') in ['operational', 'harvest']
+        && d.get('isSellable', false) is bool
+        && (d.get('isSellable', false) == false || (d.get('productType', '') == 'harvest' && d.moduleType != ''))
         && d.isDeleted is bool && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
     }
     function pairedStock(id, d, before) {
@@ -452,13 +456,15 @@ service cloud.firestore {
       allow read: if canReadOperations();
       allow create: if canManageOperations() && validInventory(itemId, request.resource.data)
         && createsOwnDocument(itemId) && request.resource.data.createdAt == request.time
+        && (request.resource.data.get('isSellable', false) == false || isAdmin())
         && ((request.resource.data.currentStock == 0 && !('lastTransactionId' in request.resource.data))
           || pairedStock(itemId, request.resource.data, 0));
       allow update: if canManageOperations() && validInventory(itemId, request.resource.data)
         && updatesExistingDocument() && resource.data.isDeleted == false
         && (
           (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'name', 'category', 'location', 'minStock', 'isLowStock', 'updatedBy', 'updatedAt'])
+            'name', 'category', 'location', 'minStock', 'isLowStock', 'updatedBy', 'updatedAt', 'productType', 'isSellable'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['productType', 'isSellable']) || isAdmin())
             && request.resource.data.isDeleted == false)
           || (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'currentStock', 'lastTransactionId', 'isLowStock', 'updatedBy', 'updatedAt'])
@@ -469,7 +475,8 @@ service cloud.firestore {
       allow delete: if false;
     }
     function validLedgerSource(d, item) {
-      return (d.source == 'manual' && d.requestId == d.id
+      return (d.source == 'sale' && isAdmin() && validSaleLedger(d))
+        || (d.source == 'manual' && d.requestId == d.id
           && d.type in ['in', 'out', 'correction'] && d.notes.size() > 0
           && d.moduleType == item.moduleType && !('logbookId' in d)
           && d.allowNegative is bool && finiteStock(d.requestedValue) && d.requestedValue >= 0
@@ -495,7 +502,7 @@ service cloud.firestore {
       return d.keys().hasOnly(['id', 'requestId', 'itemId', 'itemName', 'itemKey', 'moduleType',
           'type', 'quantity', 'unit', 'beforeStock', 'afterStock', 'notes', 'transactionDate',
           'createdBy', 'createdAt', 'batchId', 'logbookId', 'source', 'isReversed',
-          'reversedAt', 'reversedBy', 'allowNegative', 'requestedValue'])
+          'reversedAt', 'reversedBy', 'allowNegative', 'requestedValue', 'saleId'])
         && d.id == id && d.createdBy == request.auth.uid
         && d.createdAt == request.time && d.transactionDate == request.time
         && d.itemName == item.name && d.itemKey == item.itemKey && d.unit == item.unit
@@ -508,6 +515,7 @@ service cloud.firestore {
         && ((d.type in ['in', 'opening'] && d.quantity > 0 && d.afterStock == d.beforeStock + d.quantity)
           || (d.type == 'out' && d.quantity > 0 && d.afterStock == d.beforeStock - d.quantity)
           || (d.type == 'correction' && d.quantity == math.abs(d.afterStock - d.beforeStock)))
+        && (d.source == 'sale' || !('saleId' in d))
         && validLedgerSource(d, item);
     }
     match /inventory_transactions/{transactionId} {
@@ -536,14 +544,46 @@ service cloud.firestore {
       Data aliran nutrisi dashboard. Semua user aktif bisa baca,
       admin/operator lapangan bisa tambah data operasional.
     */
+    function flowBatch(id, moduleType) {
+      return exists(/databases/$(database)/documents/batches/$(id))
+        && actualReference(get(/databases/$(database)/documents/batches/$(id)).data)
+        && get(/databases/$(database)/documents/batches/$(id)).data.isDeleted == false
+        && get(/databases/$(database)/documents/batches/$(id)).data.moduleType == moduleType;
+    }
+    function validFlow(id, d) {
+      return d.keys().hasOnly(['id', 'requestId', 'creationPayload', 'sourceModuleType',
+          'destinationModuleType', 'materialName', 'quantity', 'unit', 'flowDate',
+          'sourceBatchId', 'destinationBatchId', 'logbookId', 'inventoryTransactionId',
+          'sourceType', 'notes', 'createdBy', 'createdByName', 'createdAt'])
+        && d.id == id && d.requestId == id && d.creationPayload is string
+        && d.sourceModuleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.destinationModuleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.sourceModuleType != d.destinationModuleType
+        && d.materialName is string && d.materialName.size() > 0
+        && finiteStock(d.quantity) && d.quantity > 0 && d.quantity <= 1000000000000
+        && d.unit in ['kg', 'g', 'liter', 'ml', 'butir', 'ekor'] && d.flowDate is timestamp
+        && d.flowDate >= timestamp.date(2020, 1, 1) && d.flowDate <= timestamp.date(2100, 12, 31)
+        && (!('createdByName' in d) || d.createdByName == currentUser().data.get('name', 'Pengguna SeiCycle'))
+        && d.sourceType == 'manual' && d.notes is string
+        && d.createdBy == request.auth.uid && d.createdAt == request.time
+        && (!('sourceBatchId' in d) || flowBatch(d.sourceBatchId, d.sourceModuleType))
+        && (!('destinationBatchId' in d) || flowBatch(d.destinationBatchId, d.destinationModuleType))
+        && (!('logbookId' in d) ||
+          (get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.isDeleted == false
+            && actualReference(get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data)
+            && get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.moduleType in [d.sourceModuleType, d.destinationModuleType]))
+        && (!('inventoryTransactionId' in d) || validFlowLedger(d));
+    }
+    function validFlowLedger(d) {
+      let ledger = get(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId)).data;
+      return ledger.moduleType in [d.sourceModuleType, d.destinationModuleType]
+        && actualReference(ledger)
+        && ledger.unit == d.unit && ledger.quantity == d.quantity && ledger.isReversed == false;
+    }
     match /circular_flows/{flowId} {
       allow read: if canViewAppData();
-      allow create: if isAdmin()
-        || (
-          canManageOperations()
-          && request.resource.data.id == flowId
-        );
-      allow update, delete: if isAdmin();
+      allow create: if canManageOperations() && validFlow(flowId, request.resource.data);
+      allow update, delete: if false;
     }
 
     /*
@@ -608,21 +648,121 @@ service cloud.firestore {
       Hanya admin aktif dan operator keuangan aktif boleh membaca/menulis.
       Pembatasan berlaku juga bagi query SDK langsung.
     */
+    function manualFinance(d) {
+      return d.get('source', 'manual') == 'manual' && d.get('saleId', '') == '';
+    }
+    function validFinanceEdit(id, d) {
+      let audit = getAfter(/databases/$(database)/documents/finance_transactions/$(id)/edits/$(d.lastEditId)).data;
+      return !exists(/databases/$(database)/documents/finance_transactions/$(id)/edits/$(d.lastEditId))
+        && audit.before == resource.data && audit.after == d
+        && audit.editedBy == request.auth.uid && audit.editedAt == request.time;
+    }
     match /finance_transactions/{transactionId} {
       allow read: if canManageFinance();
+      allow create: if canManageFinance() && validFinanceTransaction(transactionId, request.resource.data)
+        && createsOwnDocument(transactionId) && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && ((manualFinance(request.resource.data)
+              && request.resource.data.requestId == transactionId
+              && request.resource.data.creationPayload is string
+              && request.resource.data.version == 0
+              && !('lastEditId' in request.resource.data)
+              && !('sampleVersion' in request.resource.data)
+              && request.resource.data.get('isSampleData', false) == false)
+          || (isAdmin() && validSaleFinance(transactionId, request.resource.data)));
+      allow update: if canManageFinance() && manualFinance(resource.data)
+        && resource.data.isDeleted == false && manualFinance(request.resource.data)
+        && updatesExistingDocument() && validFinanceTransaction(transactionId, request.resource.data)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.version == resource.data.get('version', 0) + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'type', 'category', 'amount', 'date', 'description', 'notes', 'paymentMethod',
+          'moduleType', 'isDeleted', 'updatedBy', 'updatedAt', 'version', 'lastEditId'])
+        && validFinanceEdit(transactionId, request.resource.data);
+      allow delete: if false;
+      match /edits/{editId} {
+        allow read: if canManageFinance();
+        allow create: if canManageFinance()
+          && request.resource.data.keys().hasOnly(['before', 'after', 'payload', 'editedBy', 'editedAt'])
+          && request.resource.data.editedBy == request.auth.uid
+          && request.resource.data.editedAt == request.time && request.resource.data.payload is string
+          && manualFinance(request.resource.data.before) && manualFinance(request.resource.data.after)
+          && request.resource.data.after.updatedAt == request.time
+          && request.resource.data.after.updatedBy == request.auth.uid
+          && request.resource.data.after.version == request.resource.data.before.get('version', 0) + 1
+          && request.resource.data.before == get(/databases/$(database)/documents/finance_transactions/$(transactionId)).data
+          && request.resource.data.after == getAfter(/databases/$(database)/documents/finance_transactions/$(transactionId)).data
+          && getAfter(/databases/$(database)/documents/finance_transactions/$(transactionId)).data.lastEditId == editId;
+        allow update, delete: if false;
+      }
+    }
 
-      allow create: if canManageFinance()
-        && validFinanceTransaction(transactionId, request.resource.data)
-        && (
-          isAdmin()
-          || createsOwnDocument(transactionId)
-        );
+    // All four edges validate their own state and the new linked receipt.
+    function freshSale(id) {
+      return !exists(/databases/$(database)/documents/sales/$(id))
+        && getAfter(/databases/$(database)/documents/sales/$(id)).data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/sales/$(id)).data.createdBy == request.auth.uid;
+    }
+    function validSaleLedger(d) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(d.saleId)).data;
+      return freshSale(d.saleId) && d.id == 'sale_' + d.saleId && d.requestId == d.saleId
+        && d.type == 'out' && d.source == 'sale' && d.afterStock >= 0
+        && d.itemId == sale.inventoryItemId && d.quantity == sale.quantity
+        && d.moduleType == sale.moduleType && d.unit == sale.unit
+        && sale.inventoryTransactionId == d.id && !('batchId' in d) && !('logbookId' in d)
+        && !('allowNegative' in d) && !('requestedValue' in d);
+    }
+    function validSaleFinance(id, d) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(d.saleId)).data;
+      return freshSale(d.saleId) && id == 'sale_' + d.saleId && d.requestId == d.saleId
+        && d.source == 'sale' && d.type == 'income' && d.isDeleted == false
+        && d.amount == sale.totalAmount && d.category == 'Penjualan hasil panen'
+        && d.moduleType == sale.moduleType && d.date == sale.saleDate
+        && d.paymentMethod == sale.paymentMethod && sale.financeTransactionId == id
+        && d.version == 0 && !('lastEditId' in d) && !('creationPayload' in d)
+        && d.get('isSampleData', false) == false;
+    }
+    function validSale(id, d) {
+      let before = get(/databases/$(database)/documents/inventory/$(d.inventoryItemId)).data;
+      let item = getAfter(/databases/$(database)/documents/inventory/$(d.inventoryItemId)).data;
+      let ledger = getAfter(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId)).data;
+      let finance = getAfter(/databases/$(database)/documents/finance_transactions/$(d.financeTransactionId)).data;
+      return d.keys().hasOnly(['id', 'requestId', 'saleNumber', 'creationPayload',
+          'inventoryItemId', 'productName', 'moduleType', 'quantity', 'quantityMilli', 'unit',
+          'unitPrice', 'totalAmount', 'buyerName', 'paymentMethod', 'saleDate', 'notes', 'status',
+          'inventoryTransactionId', 'financeTransactionId', 'createdBy', 'createdByName', 'updatedBy', 'createdAt', 'updatedAt'])
+        && (!('createdByName' in d) || d.createdByName == currentUser().data.get('name', request.auth.uid))
+        && d.id == id && d.requestId == id && d.saleNumber == 'S-' + id && d.creationPayload is string
+        && d.inventoryTransactionId == 'sale_' + id && d.financeTransactionId == 'sale_' + id
+        && !exists(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId))
+        && !exists(/databases/$(database)/documents/finance_transactions/$(d.financeTransactionId))
+        && d.createdBy == request.auth.uid && d.updatedBy == request.auth.uid
+        && d.createdAt == request.time && d.updatedAt == request.time && d.status == 'paid'
+        && d.saleDate is timestamp && d.saleDate >= timestamp.date(2020, 1, 1) && d.saleDate <= timestamp.date(2100, 12, 31)
+        && d.paymentMethod in ['tunai', 'transfer', 'qris'] && d.buyerName is string && d.notes is string
+        && d.quantityMilli is int && d.quantityMilli > 0 && d.quantityMilli <= 1000000000
+        && d.quantity == d.quantityMilli / 1000.0
+        && d.unitPrice is int && d.unitPrice > 0 && d.unitPrice <= 1000000000
+        && d.totalAmount is int && d.totalAmount > 0 && d.totalAmount <= 1000000000000
+        && d.totalAmount == int(d.quantityMilli * d.unitPrice / 1000.0 + 0.5)
+        && d.productName == before.name && d.unit == before.unit && d.moduleType == before.moduleType
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && before.isDeleted == false && before.isSellable == true && before.productType == 'harvest'
+        && actualReference(before)
+        && before.currentStock >= d.quantity && item.currentStock == before.currentStock - d.quantity
+        && item.lastTransactionId == d.inventoryTransactionId && item.updatedAt == request.time
+        && ledger.saleId == id && ledger.source == 'sale' && ledger.quantity == d.quantity
+        && finance.saleId == id && finance.source == 'sale' && finance.amount == d.totalAmount;
+    }
+    match /sales/{saleId} {
+      allow read: if canManageFinance();
+      allow create: if isAdmin() && validSale(saleId, request.resource.data);
+      allow update, delete: if false;
+    }
 
-      allow update: if canManageFinance()
-        && updatesExistingDocument()
-        && validFinanceTransaction(transactionId, request.resource.data);
-
-      allow delete: if canManageFinance();
+    function actualReference(d) {
+      return d.get('isSampleData', false) != true && d.get('createdBy', '') != 'sample_seed'
+        && d.get('sampleVersion', '') != 'v2';
     }
 
     /*

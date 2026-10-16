@@ -362,3 +362,6 @@ PRIVATE.md
 secrets/
 credentials/
 private/
+
+# Python audit tool cache
+__pycache__/

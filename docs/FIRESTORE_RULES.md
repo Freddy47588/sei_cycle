@@ -84,3 +84,22 @@ Rules/index belum dideploy. Koordinasikan pembaruan client, audit data/skrip see
 `finance_transactions` sekarang memakai `allow read: if canManageFinance();`. Fungsi existing tersebut mengharuskan admin/operator keuangan aktif, termasuk pemeriksaan kedua flag isActive/is_active. Operator lapangan, legacy pembaca, inaktif, pengguna tanpa profil dan anonymous tidak diberi akses baca finance. Tidak ada perubahan izin tulis transaksi pada phase ini.
 
 Dashboard dan report service tidak meminta finance tanpa `canViewFinanceDashboard`; jika query finance yang sah ditolak, error tetap ditampilkan, bukan dianggap transaksi kosong. Rules test memeriksa pembacaan dokumen, query dan agregasi untuk enam kategori identitas. Semua rules/index perlu review dan deployment manual sebelum perlindungan ini berlaku pada Firebase tujuan.
+# Phase 06 — Penguatan Finance, Sales dan Circular Flow
+
+Rules terbaru harus ditinjau dan dideploy **manual** bersama indexes. Pekerjaan ini tidak mengubah Rules pada Firebase produksi. Client Finance lama tanpa request/audit baru tidak kompatibel dengan write contract baru; koordinasikan rilis aplikasi dan Rules.
+
+| Role aktif | Finance/Sales read | Finance manual create/edit/soft-delete | Sales create | Flow read/create |
+| --- | --- | --- | --- | --- |
+| admin | Ya | Ya, edit/delete ber-audit | Ya, quartet atomik | Ya/Ya |
+| operator_keuangan | Ya | Ya, edit/delete ber-audit | Tidak | Ya/Tidak |
+| operator_lapangan / operator | Tidak | Tidak | Tidak | Ya/Ya |
+| mitra / peserta_edukasi | Tidak | Tidak | Tidak | Ya/Tidak |
+| inactive / anonymous | Tidak | Tidak | Tidak | Tidak/Tidak |
+
+Sales receipt, ledger, sale-linked finance dan actual flow immutable untuk semua role termasuk admin. Sales getAfter memverifikasi pasangan inventory/ledger/finance baru, stok before/after nonnegatif, master harvest/sellable, aktor/waktu/status paid, unit, tanggal, harga integer dan rumus pembulatan. Ledger source sale memverifikasi fresh receipt dan saldo inventory; finance source sale memverifikasi saleId, nominal, income, tanggal/modul/metode. Masing-masing sisi memiliki validasi sendiri; menghilangkan salah satu write ditolak tanpa partial commit. Referensi data sampel ditolak. Receipt lama tidak dapat digunakan untuk debit baru.
+
+Finance manual create mengikat ID/request/actor/version; nominal finite positif maksimal1e12 dan tanggal valid. Edit/soft delete membutuhkan subdocument audit baru yang before-nya sama resource lama, after sama parent getAfter, server editedAt/updatedAt, aktor valid, dan version+1. Parent mempertahankan metadata create/payload/source. Histori tidak dapat diedit, dibuat sendiri tanpa mutasi parent, atau dihapus. Hard delete finance ditolak. Sale-linked finance tidak dapat masuk jalur manual.
+
+Circular Flow create memeriksa schema, canonical modules berbeda, quantity/unit/tanggal, actor server audit, sourceType manual dan referensi batch/Logbook/ledger yang relevan. Tidak ada write stok dari flow. Legacy flow read tetap diperbolehkan sesuai role aktif, tetapi tidak dimigrasikan otomatis menjadi aktual.
+
+Validasi penjualan dijalankan pada Firebase Emulator melalui SDK langsung: kompetisi request, overselling, write hilang, total/quantity/precision/unit/actor/status/source/link palsu, immutability, klasifikasi produk dan role. Regresi largest Logbook multi-item Phase04 tetap diuji untuk document access budget. Emulator bukan bukti index/deployment produksi atau semua perilaku native Android. Rincian dan hitungan tes akhir: [Phase 06](PHASE_06_FINANCE_SALES_CIRCULAR_FLOW.md).

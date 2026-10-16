@@ -82,11 +82,11 @@ class _InventoryHistoryScreenState extends State<InventoryHistoryScreen> {
                 ),
                 items: const [
                   DropdownMenuItem(value: 'all', child: Text('Semua mutasi')),
-                  DropdownMenuItem(value: 'itemId', child: Text('ID Barang')),
-                  DropdownMenuItem(value: 'batchId', child: Text('ID Batch')),
+                  DropdownMenuItem(value: 'itemId', child: Text('Barang')),
+                  DropdownMenuItem(value: 'batchId', child: Text('Batch')),
                   DropdownMenuItem(
                     value: 'logbookId',
-                    child: Text('ID Logbook'),
+                    child: Text('Catatan Logbook'),
                   ),
                   DropdownMenuItem(value: 'moduleType', child: Text('Modul')),
                   DropdownMenuItem(value: 'type', child: Text('Jenis mutasi')),
@@ -116,24 +116,56 @@ class _InventoryHistoryScreenState extends State<InventoryHistoryScreen> {
                     for (final v
                         in _field == 'type'
                             ? ['in', 'out', 'correction', 'opening']
-                            : ['manual', 'logbook', 'opening'])
+                            : ['manual', 'logbook', 'opening', 'sale'])
                       DropdownMenuItem(value: v, child: Text(mutationLabel(v))),
                   ],
                   onChanged: (v) => setState(() => _applied = v!),
                 )
               else if (_field != 'all')
-                TextField(
-                  controller: _value,
-                  decoration: InputDecoration(
-                    labelText: 'ID lengkap',
-                    suffixIcon: IconButton(
-                      onPressed: () =>
-                          setState(() => _applied = _value.text.trim()),
-                      icon: const Icon(Icons.search),
-                      tooltip: 'Terapkan filter',
-                    ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.search),
+                  label: Text(
+                    _applied.isEmpty
+                        ? 'Pilih ${_field == 'itemId'
+                              ? 'barang'
+                              : _field == 'batchId'
+                              ? 'batch'
+                              : 'catatan Logbook'} dari daftar'
+                        : 'Pilihan: ${_value.text}',
                   ),
-                  onSubmitted: (v) => setState(() => _applied = v.trim()),
+                  onPressed: () async {
+                    final selected = await showDialog<HistoryReference>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: const Text('Pilih Referensi Histori'),
+                        content: SizedBox(
+                          width: 500,
+                          height: 400,
+                          child: FirestorePagedList<HistoryReference>(
+                            queryKey: _field,
+                            load: (cursor) =>
+                                _service.references(_field, cursor: cursor),
+                            itemBuilder: (r) => ListTile(
+                              title: Text(r.label),
+                              onTap: () => Navigator.pop(context, r),
+                            ),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Batal'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (selected != null && mounted) {
+                      setState(() {
+                        _applied = selected.id;
+                        _value.text = selected.label;
+                      });
+                    }
+                  },
                 ),
               Wrap(
                 spacing: 8,
@@ -234,6 +266,7 @@ String mutationLabel(String type) => switch (type) {
   'out' => 'Stok Keluar',
   'correction' => 'Koreksi Stok',
   'opening' => 'Saldo Awal',
+  'sale' => 'Penjualan',
   'manual' => 'Manual',
   'logbook' => 'Logbook',
   _ => type,

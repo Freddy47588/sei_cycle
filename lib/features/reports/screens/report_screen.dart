@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/utils/excel_generator.dart';
+import '../../../core/utils/operation_error.dart';
 import '../../../core/utils/pdf_generator.dart';
 import '../../../core/widgets/app_ui.dart';
 import '../../../core/widgets/async_state_widgets.dart';
@@ -60,7 +61,7 @@ class _ReportScreenState extends State<ReportScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Gagal mengekspor PDF: $e')));
+        ).showSnackBar(SnackBar(content: Text(operationError(e))));
       }
     }
   }
@@ -72,7 +73,7 @@ class _ReportScreenState extends State<ReportScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Gagal mengekspor Excel: $e')));
+        ).showSnackBar(SnackBar(content: Text(operationError(e))));
       }
     }
   }
@@ -95,6 +96,7 @@ class _ReportScreenState extends State<ReportScreen> {
           const SizedBox(height: 14),
           Expanded(
             child: FutureBuilder<AnalyticsModel>(
+              key: ObjectKey(_dataFuture),
               future: _dataFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
@@ -102,7 +104,7 @@ class _ReportScreenState extends State<ReportScreen> {
                 }
                 if (snapshot.hasError) {
                   return ErrorState(
-                    message: 'Gagal memuat laporan: ${snapshot.error}',
+                    message: operationError(snapshot.error!),
                     onRetry: _load,
                   );
                 }
@@ -172,7 +174,9 @@ class _ReportScreenState extends State<ReportScreen> {
         data.logbooks.isNotEmpty ||
         data.lowStockItems.isNotEmpty ||
         data.totalIncome > 0 ||
-        data.totalExpense > 0;
+        data.totalExpense > 0 ||
+        data.sales.isNotEmpty ||
+        data.circularFlows.isNotEmpty;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 12),
@@ -235,8 +239,7 @@ class _ReportScreenState extends State<ReportScreen> {
                     ? AppColors.success
                     : AppColors.warning,
               ),
-              if (_filter.reportType == ReportType.fullSummary ||
-                  _filter.reportType == ReportType.finance)
+              if (data.financeIncluded)
                 _ReportMetric(
                   label: 'Total pemasukan',
                   value: currencyFormat.format(data.totalIncome),
@@ -244,8 +247,7 @@ class _ReportScreenState extends State<ReportScreen> {
                   icon: Icons.south_west_rounded,
                   color: AppColors.success,
                 ),
-              if (_filter.reportType == ReportType.fullSummary ||
-                  _filter.reportType == ReportType.finance)
+              if (data.financeIncluded)
                 _ReportMetric(
                   label: 'Total pengeluaran',
                   value: currencyFormat.format(data.totalExpense),
@@ -253,10 +255,9 @@ class _ReportScreenState extends State<ReportScreen> {
                   icon: Icons.north_east_rounded,
                   color: AppColors.error,
                 ),
-              if (_filter.reportType == ReportType.fullSummary ||
-                  _filter.reportType == ReportType.finance)
+              if (data.financeIncluded)
                 _ReportMetric(
-                  label: 'Laba bersih',
+                  label: 'Arus Kas Bersih',
                   value: currencyFormat.format(data.profitLoss),
                   helper: data.profitLoss >= 0
                       ? 'Arus kas positif'
@@ -276,6 +277,40 @@ class _ReportScreenState extends State<ReportScreen> {
               ],
             );
           },
+        ),
+        if (data.financeIncluded)
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Penjualan periode: ${currencyFormat.format(data.totalSales)}',
+                ),
+                const Text('Penjualan per produk'),
+                for (final e in data.salesPerProduct.entries)
+                  Text('${e.key}: ${currencyFormat.format(e.value)}'),
+                const Text('Penjualan per modul'),
+                for (final e in data.salesPerModule.entries)
+                  Text('${e.key}: ${currencyFormat.format(e.value)}'),
+                const Text(
+                  'Pemasukan dihitung dari Keuangan; total penjualan tidak ditambahkan lagi.',
+                ),
+              ],
+            ),
+          ),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Aliran nutrisi aktual'),
+              if (data.circularFlows.isEmpty)
+                const Text(
+                  'Belum ada catatan aliran aktual pada cakupan laporan.',
+                ),
+              for (final e in data.flowsPerMaterial.entries)
+                Text('${e.key}: ${e.value}'),
+            ],
+          ),
         ),
         const SizedBox(height: 14),
         InlineMessage(

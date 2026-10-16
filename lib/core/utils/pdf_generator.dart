@@ -9,7 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../features/reports/models/analytics_model.dart';
 
 class PdfGenerator {
-  static Future<void> generateAndSharePdf(AnalyticsModel data) async {
+  static Future<List<int>> buildBytes(AnalyticsModel data) async {
     final pdf = pw.Document();
 
     // Load logo
@@ -39,6 +39,18 @@ class PdfGenerator {
             _buildSummary(data, currencyFormat),
             pw.SizedBox(height: 20),
             _buildLogbooksTable(data, dateFormat),
+            if (data.financeIncluded) ...[
+              pw.SizedBox(height: 16),
+              pw.Text('Penjualan: ${currencyFormat.format(data.totalSales)}'),
+              for (final e in data.salesPerProduct.entries)
+                pw.Text('${e.key}: ${currencyFormat.format(e.value)}'),
+              for (final e in data.salesPerModule.entries)
+                pw.Text('${e.key}: ${currencyFormat.format(e.value)}'),
+            ],
+            pw.SizedBox(height: 16),
+            pw.Text('Aliran nutrisi aktual'),
+            for (final e in data.flowsPerMaterial.entries)
+              pw.Text('${e.key}: ${e.value}'),
           ];
         },
         footer: (pw.Context context) {
@@ -54,12 +66,16 @@ class PdfGenerator {
       ),
     );
 
-    // Save and Share
+    return pdf.save();
+  }
+
+  static Future<void> generateAndSharePdf(AnalyticsModel data) async {
+    final bytes = await buildBytes(data);
     final output = await getTemporaryDirectory();
     final file = File(
       '${output.path}/Laporan_SeiCycle_${DateTime.now().millisecondsSinceEpoch}.pdf',
     );
-    await file.writeAsBytes(await pdf.save());
+    await file.writeAsBytes(bytes);
 
     await SharePlus.instance.share(
       ShareParams(files: [XFile(file.path)], text: 'Laporan SeiCycle'),
@@ -114,13 +130,18 @@ class PdfGenerator {
           pw.SizedBox(height: 8),
           pw.Text('Total Aktivitas: ${data.logbooks.length} catatan'),
           pw.Text('Item Stok Rendah: ${data.lowStockItems.length} item'),
-          pw.Text(
-            'Total Pemasukan: ${currencyFormat.format(data.totalIncome)}',
-          ),
-          pw.Text(
-            'Total Pengeluaran: ${currencyFormat.format(data.totalExpense)}',
-          ),
-          pw.Text('Laba Bersih: ${currencyFormat.format(data.profitLoss)}'),
+          if (data.financeIncluded)
+            pw.Text(
+              'Total Pemasukan: ${currencyFormat.format(data.totalIncome)}',
+            ),
+          if (data.financeIncluded)
+            pw.Text(
+              'Total Pengeluaran: ${currencyFormat.format(data.totalExpense)}',
+            ),
+          if (data.financeIncluded)
+            pw.Text(
+              'Arus Kas Bersih: ${currencyFormat.format(data.profitLoss)}',
+            ),
         ],
       ),
     );

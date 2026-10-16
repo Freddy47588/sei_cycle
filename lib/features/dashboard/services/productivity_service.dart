@@ -1,3 +1,4 @@
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../models/dashboard_filter.dart';
@@ -13,6 +14,7 @@ class ProductivityService {
     String module,
     String? batchId,
   ) async {
+    await requireNoSampleData(_db, ['logbooks', 'production_results']);
     Query<Map<String, dynamic>> query(String collection, String field) {
       Query<Map<String, dynamic>> q = _db
           .collection(collection)

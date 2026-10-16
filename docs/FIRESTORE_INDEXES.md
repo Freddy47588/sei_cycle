@@ -126,3 +126,18 @@ Baseline aa6bfb8 memiliki 74 composite index. Phase 05 menambah empat kombinasi 
 Query tanpa batch menggunakan index modul/tanggal existing. Count modul aktif/batch status menggunakan agregasi tanpa mendownload dokumen; count jadwal harian/status menggunakan isDeleted/status/date yang sudah ada. Stock memakai isDeleted + document ID default dengan limit 201. Circular flow memakai single-field flowDate bawaan, bukan composite satu-field. Parent produksi ditelusuri melalui document ID `whereIn` maksimal 30 ID per permintaan.
 
 Semua pembacaan dokumen Dashboard dibatasi. `failed-precondition` dan `permission-denied` tidak memicu fallback collection scan. Emulator memverifikasi izin dan bentuk query, bukan kesiapan index produksi. Pengelola harus meninjau dan menerapkan **Rules serta index bersama-sama secara manual**, menunggu index siap, lalu melakukan smoke test perangkat; agent tidak melakukan deployment Firebase.
+# Tambahan Phase 06 — 93 composite indexes
+
+Baseline78 dipertahankan, ditambah15 kombinasi yang digunakan query:
+
+| Collection | Equality ASC | Urutan | Jumlah baru |
+| --- | --- | --- | --- |
+| finance_transactions | isDeleted + kombinasi type/category/moduleType; dua kombinasi dasar existing digunakan ulang | date DESC | 6 |
+| circular_flows | materialName; destination+material; source+material; source+destination; source+destination+material | flowDate DESC | 5 |
+| circular_flows | sourceType; sourceModuleType+sourceType (laporan aktual) | flowDate DESC | 2 |
+| sales | moduleType | saleDate DESC | 1 |
+| inventory | isDeleted, isSellable, productType | name ASC | 1 |
+
+Filter rentang memakai field urutan yang sama. Daftar/pemilih menggunakan cursor/limit20, ringkasan finance/sales501 untuk mendeteksi batas500, report1001 untuk batas1000. Histori edit finance memakai single-field editedAt DESC bawaan. Audit marker sampel memakai equality satu-field/limit1 tanpa order tambahan. Tidak menambah composite satu-field produksi/flow yang pernah memicu HTTP400.
+
+JSON dan duplikasi diverifikasi secara lokal. Emulator memverifikasi bentuk query/akses, bukan kesiapan composite index produksi. Tidak ada deployment otomatis; pengelola harus meninjau dan menerapkan Rules/index bersama lalu menunggu status index siap. Lihat [Phase 06](PHASE_06_FINANCE_SALES_CIRCULAR_FLOW.md).

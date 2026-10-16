@@ -4,6 +4,8 @@ import '../../../core/utils/firestore_fields.dart';
 
 class FinanceRecord {
   const FinanceRecord({
+    this.saleId = '',
+    this.version = 0,
     required this.id,
     required this.type,
     required this.category,
@@ -19,6 +21,9 @@ class FinanceRecord {
     required this.isDeleted,
   });
 
+  final String saleId;
+  final int version;
+  bool get isSaleLinked => saleId.isNotEmpty;
   final String id;
   final String type;
   final String category;
@@ -40,6 +45,8 @@ class FinanceRecord {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return FinanceRecord(
+      saleId: stringField(data, const ['saleId']),
+      version: (data['version'] as num?)?.toInt() ?? 0,
       id: stringField(data, const ['id'], fallback: document.id),
       type: stringField(data, const ['type'], fallback: 'expense'),
       category: stringField(data, const ['category', 'title']),
@@ -61,6 +68,8 @@ class FinanceRecord {
 
   Map<String, dynamic> toFirestore() {
     return {
+      if (saleId.isNotEmpty) 'saleId': saleId,
+      'version': version,
       'id': id,
       'type': type,
       'category': category,

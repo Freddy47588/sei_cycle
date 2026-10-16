@@ -7,6 +7,10 @@ import '../../batches/services/batch_service.dart';
 import '../../logbook/screen/logbook_detail_screen.dart';
 import '../../logbook/services/logbook_service.dart';
 import '../../schedule/screen/schedule_screen.dart';
+import '../../sales/screen/sales_screen.dart';
+import '../../circular_flow/screen/circular_flow_screen.dart';
+import '../../../core/utils/formatters.dart';
+import '../../../core/utils/operation_error.dart';
 import '../models/dashboard_filter.dart';
 import '../widgets/module_monitoring_section.dart';
 import 'package:intl/intl.dart';
@@ -316,6 +320,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     subtitle: 'Diagram konsep dan catatan aliran aktual',
                   ),
                   NutrientFlowCard(flows: summary.circularFlows),
+                  TextButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => Scaffold(
+                          appBar: AppBar(title: const Text('Aliran Nutrisi')),
+                          body: CircularFlowScreen(profile: widget.profile),
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.recycling),
+                    label: const Text('Lihat Aliran Aktual'),
+                  ),
+                  if (widget.profile.canViewSales)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Penjualan Periode Terpilih',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            if (summary.salesError != null)
+                              Text(operationError(summary.salesError!))
+                            else if (summary.salesTotal != null) ...[
+                              Text(currencyFormat.format(summary.salesTotal)),
+                              if (summary.soldQuantities.isEmpty)
+                                const Text('Belum ada penjualan.'),
+                              for (final entry
+                                  in summary.soldQuantities.entries)
+                                Text('${entry.key}: ${entry.value}'),
+                            ],
+                            const Text(
+                              'Pemasukan lengkap tetap berasal dari catatan Keuangan.',
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => Scaffold(
+                                    appBar: AppBar(
+                                      title: const Text('Penjualan'),
+                                    ),
+                                    body: SalesScreen(profile: widget.profile),
+                                  ),
+                                ),
+                              ),
+                              child: const Text('Lihat Penjualan'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   Text(
                     'Pratinjau maksimal 5 aliran terbaru - ${_filter.label}',
                   ),

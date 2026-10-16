@@ -4,6 +4,8 @@ import '../../../core/utils/firestore_fields.dart';
 
 class InventoryItem {
   InventoryItem({
+    this.productType = 'operational',
+    this.isSellable = false,
     required this.id,
     required this.name,
     String? itemKey,
@@ -21,6 +23,8 @@ class InventoryItem {
     required this.isDeleted,
   }) : itemKey = itemKey ?? _fallbackItemKey(name);
 
+  final String productType;
+  final bool isSellable;
   final String id;
   final String name;
   final String itemKey;
@@ -47,6 +51,11 @@ class InventoryItem {
     ]);
     final minStock = doubleField(data, const ['minStock', 'min_stock']);
     return InventoryItem(
+      productType: stringField(data, const [
+        'productType',
+      ], fallback: 'operational'),
+      isSellable:
+          data['isSellable'] == true && data['productType'] == 'harvest',
       id: document.id,
       name: stringField(data, const ['name']),
       itemKey: stringField(data, const [
@@ -70,6 +79,8 @@ class InventoryItem {
 
   Map<String, dynamic> toFirestore() {
     return {
+      'productType': productType,
+      'isSellable': isSellable,
       'id': id,
       'name': name,
       'itemKey': itemKey,

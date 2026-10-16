@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
+import '../../../core/widgets/firestore_paged_list.dart';
+import '../../../core/widgets/period_filter.dart';
+import '../../../core/utils/operation_error.dart';
 
 import '../../../core/constants/farm_modules.dart';
 
@@ -11,10 +15,12 @@ import '../../../core/widgets/feature_page.dart';
 import '../../../theme/app_theme.dart';
 import '../../profile/models/app_user.dart';
 import '../models/finance_record.dart';
+import 'finance_detail_screen.dart';
 import '../services/finance_service.dart';
 
 class FinanceScreen extends StatefulWidget {
-  const FinanceScreen({required this.profile, super.key});
+  const FinanceScreen({required this.profile, this.service, super.key});
+  final FinanceService? service;
 
   final AppUser profile;
 
@@ -23,59 +29,95 @@ class FinanceScreen extends StatefulWidget {
 }
 
 class _FinanceScreenState extends State<FinanceScreen> {
-  late final FinanceService _service;
-
+  late final _service = widget.service ?? FinanceService();
+  DateTimeRange _period = monthPeriod();
+  String? _type, _module, _category;
+  String _search = '';
+  int _revision = 0;
+  late Future<FinanceSummary> _summary;
   @override
   void initState() {
     super.initState();
-    _service = FinanceService();
+    if (widget.profile.canViewFinance) _reloadSummary();
   }
 
-  Future<void> _openForm([FinanceRecord? record]) async {
-    final value = await showDialog<_FinanceFormValue>(
-      context: context,
-      builder: (_) => _FinanceFormDialog(record: record),
+  void _reloadSummary() {
+    _summary = _service.loadSummaryByDateRange(
+      start: _period.start,
+      end: _period.end,
+      type: _type,
+      category: _category,
+      moduleType: _module,
     );
-    if (value == null || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.save(
-        id: record?.id,
-        type: value.type,
-        category: value.category,
-        amount: value.amount,
-        date: value.date,
-        note: value.note,
-        paymentMethod: value.paymentMethod,
-        moduleType: value.moduleType,
+  }
+
+  void _refresh() => setState(() {
+    _revision++;
+    _reloadSummary();
+  });
+  Future<void> _openForm([FinanceRecord? record]) async {
+    if (!widget.profile.canManageFinance || (record?.isSaleLinked ?? false)) {
+      return;
+    }
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => FinanceFormDialog(
+        record: record,
+        service: _service,
         userId: widget.profile.uid,
       ),
-      successMessage: record == null
-          ? 'Transaksi ditambahkan.'
-          : 'Transaksi diperbarui.',
     );
+    if (saved == true && mounted) {
+      _refresh();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Transaksi tersimpan.')));
+    }
   }
 
   Future<void> _delete(FinanceRecord record) async {
     final confirmed = await confirmDelete(
       context,
       title: 'Hapus transaksi?',
-      message: 'Transaksi ${record.category} akan dihapus dari laporan.',
+      message:
+          'Transaksi ${record.category} sebesar ${currencyFormat.format(record.amount)} dikeluarkan dari laporan. Histori audit tetap disimpan.',
     );
     if (!confirmed || !mounted) return;
     await runOperationWithFeedback(
       context,
-      operation: () => _service.delete(record.id, userId: widget.profile.uid),
-      successMessage: 'Transaksi dihapus.',
+      operation: () => _service.delete(
+        record.id,
+        userId: widget.profile.uid,
+        expectedUpdatedAt: record.updatedAt,
+        requestId: const Uuid().v4(),
+      ),
+      successMessage: 'Transaksi dihapus dari laporan.',
     );
+    if (mounted) _refresh();
   }
+
+  Future<void> _detail(FinanceRecord r) => Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (_) => FinanceDetailScreen(id: r.id, profile: widget.profile),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.profile.canViewFinance) {
+      return const Center(child: Text('Tidak memiliki akses keuangan.'));
+    }
     return FeaturePage(
       title: 'Keuangan',
-      subtitle: 'Catat arus kas sederhana untuk kebutuhan operasional kebun.',
+      subtitle: 'Pemasukan - Pengeluaran = Arus Kas Bersih',
       actions: [
+        IconButton(
+          onPressed: _refresh,
+          tooltip: 'Muat ulang',
+          icon: const Icon(Icons.refresh),
+        ),
         if (widget.profile.canManageFinance)
           FilledButton.icon(
             onPressed: _openForm,
@@ -83,45 +125,145 @@ class _FinanceScreenState extends State<FinanceScreen> {
             label: const Text('Tambah transaksi'),
           ),
       ],
-      child: StreamBuilder<List<FinanceRecord>>(
-        stream: _service.watchRecords(),
-        builder: (context, snapshot) {
-          final state = asyncSnapshotState(snapshot);
-          if (state != null) return state;
-          final records = snapshot.requireData;
-          final summary = _service.monthlyProfitLossFromRecords(records);
-
-          return Column(
-            children: [
-              _FinanceSummary(
-                income: summary.totalIncome,
-                expense: summary.totalExpense,
-                balance: summary.netProfit,
-              ),
-              const SizedBox(height: 14),
-              Expanded(
-                child: records.isEmpty
-                    ? const EmptyState(
-                        title: 'Belum ada transaksi',
-                        message:
-                            'Data akan muncul setelah pemasukan atau pengeluaran pertama dicatat.',
-                        icon: Icons.account_balance_wallet_outlined,
-                      )
-                    : ListView.separated(
-                        itemCount: records.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, index) => _FinanceRecordCard(
-                          record: records[index],
-                          canEdit: widget.profile.canManageFinance,
-                          canDelete: widget.profile.canDeleteFinance,
-                          onEdit: () => _openForm(records[index]),
-                          onDelete: () => _delete(records[index]),
-                        ),
+      child: Column(
+        children: [
+          Expanded(
+            child: FirestorePagedList<FinanceRecord>(
+              header: Column(
+                children: [
+                  ExpansionTile(
+                    title: const Text('Periode dan filter'),
+                    children: [
+                      PeriodFilter(
+                        value: _period,
+                        onChanged: (v) {
+                          _period = v;
+                          _refresh();
+                        },
                       ),
+                      DropdownButtonFormField<String>(
+                        initialValue: _type ?? '',
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Jenis transaksi',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: '',
+                            child: Text('Semua jenis'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'income',
+                            child: Text('Pemasukan'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'expense',
+                            child: Text('Pengeluaran'),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          _type = v == '' ? null : v;
+                          _refresh();
+                        },
+                      ),
+                      DropdownButtonFormField<String>(
+                        initialValue: '',
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'Modul'),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('Semua modul'),
+                          ),
+                          for (final m in FarmModules.values)
+                            DropdownMenuItem(value: m.id, child: Text(m.name)),
+                        ],
+                        onChanged: (v) {
+                          _module = v == '' ? null : v;
+                          _refresh();
+                        },
+                      ),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Kategori transaksi',
+                          helperText:
+                              'Tekan Enter untuk menerapkan kategori lengkap.',
+                        ),
+                        onSubmitted: (v) {
+                          _category = v.trim().isEmpty ? null : v.trim();
+                          _refresh();
+                        },
+                      ),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Cari kategori atau catatan',
+                          helperText:
+                              'Pencarian pada transaksi yang sudah dimuat; ringkasan mengikuti periode dan filter.',
+                          helperMaxLines: 4,
+                        ),
+                        onChanged: (v) =>
+                            setState(() => _search = v.toLowerCase()),
+                      ),
+                    ],
+                  ),
+                  FutureBuilder<FinanceSummary>(
+                    key: ObjectKey(_summary),
+                    future: _summary,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return ErrorState(
+                          message: operationError(snapshot.error!),
+                          onRetry: _refresh,
+                        );
+                      }
+                      if (!snapshot.hasData) return const LoadingState();
+                      final r = snapshot.requireData;
+                      return Column(
+                        children: [
+                          if (r.transactions.isEmpty)
+                            const Text(
+                              'Belum ada transaksi pada periode dan filter ini.',
+                            ),
+                          _FinanceSummary(
+                            income: r.totalIncome,
+                            expense: r.totalExpense,
+                            balance: r.netProfit,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ),
-            ],
-          );
-        },
+              queryKey: '$_revision',
+              load: (cursor) => _service.fetchPage(
+                start: _period.start,
+                end: _period.end,
+                type: _type,
+                category: _category,
+                moduleType: _module,
+                cursor: cursor,
+              ),
+              transform: (rows) => rows
+                  .where(
+                    (r) => '${r.category} ${r.notes}'.toLowerCase().contains(
+                      _search,
+                    ),
+                  )
+                  .toList(),
+              itemBuilder: (r) => InkWell(
+                onTap: () => _detail(r),
+                child: _FinanceRecordCard(
+                  record: r,
+                  canEdit: widget.profile.canManageFinance && !r.isSaleLinked,
+                  canDelete: widget.profile.canDeleteFinance && !r.isSaleLinked,
+                  onEdit: () => _openForm(r),
+                  onDelete: () => _delete(r),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -152,19 +294,19 @@ class _FinanceSummary extends StatelessWidget {
             (constraints.maxWidth - ((columns - 1) * spacing)) / columns;
         final cards = [
           _FinanceTotalCard(
-            label: 'Pemasukan bulan ini',
+            label: 'Pemasukan periode terpilih',
             value: income,
             color: AppColors.success,
             icon: Icons.south_west_rounded,
           ),
           _FinanceTotalCard(
-            label: 'Pengeluaran bulan ini',
+            label: 'Pengeluaran periode terpilih',
             value: expense,
             color: AppColors.error,
             icon: Icons.north_east_rounded,
           ),
           _FinanceTotalCard(
-            label: 'Laba / rugi bulan ini',
+            label: 'Arus Kas Bersih',
             value: balance,
             color: balance >= 0 ? AppColors.primaryGreen : AppColors.warning,
             icon: Icons.account_balance_wallet_outlined,
@@ -366,37 +508,27 @@ class _FinanceRecordCard extends StatelessWidget {
   }
 }
 
-class _FinanceFormValue {
-  const _FinanceFormValue({
-    required this.type,
-    required this.category,
-    required this.amount,
-    required this.date,
-    required this.note,
-    required this.paymentMethod,
-    required this.moduleType,
+class FinanceFormDialog extends StatefulWidget {
+  const FinanceFormDialog({
+    this.record,
+    required this.service,
+    required this.userId,
+    super.key,
   });
-
-  final String type;
-  final String category;
-  final double amount;
-  final DateTime date;
-  final String note;
-  final String paymentMethod;
-  final String moduleType;
-}
-
-class _FinanceFormDialog extends StatefulWidget {
-  const _FinanceFormDialog({this.record});
+  final FinanceService service;
+  final String userId;
 
   final FinanceRecord? record;
 
   @override
-  State<_FinanceFormDialog> createState() => _FinanceFormDialogState();
+  State<FinanceFormDialog> createState() => FinanceFormDialogState();
 }
 
-class _FinanceFormDialogState extends State<_FinanceFormDialog> {
+class FinanceFormDialogState extends State<FinanceFormDialog> {
   final _formKey = GlobalKey<FormState>();
+  final _requestId = const Uuid().v4();
+  bool _saving = false;
+  String? _error;
   late final TextEditingController _category;
   late final TextEditingController _amount;
   late final TextEditingController _note;
@@ -432,11 +564,17 @@ class _FinanceFormDialogState extends State<_FinanceFormDialog> {
   double? _parsedAmount() =>
       double.tryParse(_amount.text.trim().replaceAll(',', '.'));
 
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(
-      context,
-      _FinanceFormValue(
+  Future<void> _submit() async {
+    if (_saving || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.service.save(
+        id: widget.record?.id,
+        requestId: _requestId,
+        expectedUpdatedAt: widget.record?.updatedAt,
         type: _type,
         category: _category.text,
         amount: _parsedAmount()!,
@@ -444,124 +582,141 @@ class _FinanceFormDialogState extends State<_FinanceFormDialog> {
         note: _note.text,
         paymentMethod: _paymentMethod.text,
         moduleType: _moduleType,
-      ),
-    );
+        userId: widget.userId,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) setState(() => _error = operationError(e));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppDialogShell(
-      title: widget.record == null ? 'Tambah Transaksi' : 'Edit Transaksi',
-      maxWidth: 480,
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<String>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(
-                    value: 'income',
-                    label: Text('Pemasukan'),
-                    icon: Icon(Icons.trending_up),
+    return PopScope(
+      canPop: !_saving,
+      child: AppDialogShell(
+        title: widget.record == null ? 'Tambah Transaksi' : 'Edit Transaksi',
+        maxWidth: 480,
+        content: AbsorbPointer(
+          absorbing: _saving,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null)
+                  Text(_error!, style: const TextStyle(color: AppColors.error)),
+                DropdownButtonFormField<String>(
+                  initialValue: _type,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Jenis transaksi',
                   ),
-                  ButtonSegment(
-                    value: 'expense',
-                    label: Text('Pengeluaran'),
-                    icon: Icon(Icons.trending_down),
+                  items: const [
+                    DropdownMenuItem(value: 'income', child: Text('Pemasukan')),
+                    DropdownMenuItem(
+                      value: 'expense',
+                      child: Text('Pengeluaran'),
+                    ),
+                  ],
+                  onChanged: (value) => setState(() => _type = value!),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _category,
+                  decoration: const InputDecoration(
+                    labelText: 'Kategori',
+                    hintText: 'Contoh: penjualan telur',
                   ),
-                ],
-                selected: {_type},
-                onSelectionChanged: (value) {
-                  setState(() => _type = value.first);
-                },
-              ),
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _category,
-              decoration: const InputDecoration(
-                labelText: 'Kategori',
-                hintText: 'Contoh: penjualan telur',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _amount,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Nominal',
-                prefixText: 'Rp ',
-              ),
-              validator: (_) {
-                final value = _parsedAmount();
-                return value == null || value <= 0
-                    ? 'Nominal harus lebih dari 0'
-                    : null;
-              },
-            ),
-            const SizedBox(height: 12),
-            AppMenuCard(
-              icon: Icons.calendar_today_outlined,
-              title: 'Tanggal transaksi',
-              subtitle: shortDateFormat.format(_date),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () async {
-                final result = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime(2020),
-                  lastDate: DateTime(2100),
-                );
-                if (result != null) setState(() => _date = result);
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _paymentMethod,
-              decoration: const InputDecoration(
-                labelText: 'Metode pembayaran',
-                hintText: 'Contoh: tunai, transfer, QRIS',
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _moduleType,
-              decoration: const InputDecoration(labelText: 'Modul kebun'),
-              items: [
-                DropdownMenuItem(value: '', child: Text('Umum')),
-                for (final module in FarmModules.values)
-                  DropdownMenuItem(value: module.id, child: Text(module.name)),
+                  validator: _required,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _amount,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Nominal',
+                    prefixText: 'Rp ',
+                  ),
+                  validator: (_) {
+                    final value = _parsedAmount();
+                    return value == null ||
+                            !value.isFinite ||
+                            value > 1e12 ||
+                            value <= 0
+                        ? 'Nominal harus lebih dari 0'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                AppMenuCard(
+                  icon: Icons.calendar_today_outlined,
+                  title: 'Tanggal transaksi',
+                  subtitle: shortDateFormat.format(_date),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () async {
+                    final result = await showDatePicker(
+                      context: context,
+                      initialDate: _date,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (result != null) setState(() => _date = result);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _paymentMethod,
+                  decoration: const InputDecoration(
+                    labelText: 'Metode pembayaran',
+                    hintText: 'Contoh: tunai, transfer, QRIS',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _moduleType,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Modul kebun'),
+                  items: [
+                    DropdownMenuItem(value: '', child: Text('Umum')),
+                    for (final module in FarmModules.values)
+                      DropdownMenuItem(
+                        value: module.id,
+                        child: Text(module.name),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _moduleType = value ?? '');
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _note,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Catatan',
+                    hintText: 'Keterangan singkat transaksi (opsional)',
+                  ),
+                ),
               ],
-              onChanged: (value) {
-                setState(() => _moduleType = value ?? '');
-              },
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _note,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Catatan',
-                hintText: 'Keterangan singkat transaksi (opsional)',
-              ),
-            ),
-          ],
+          ),
         ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: Text(_saving ? 'Menyimpan...' : 'Simpan'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Batal'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('Simpan')),
-      ],
     );
   }
 }

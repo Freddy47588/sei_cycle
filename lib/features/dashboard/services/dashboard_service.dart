@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../core/utils/sample_data_guard.dart';
+import '../../sales/services/sales_service.dart';
+import '../../sales/models/sale.dart';
 
 import '../../../core/constants/firestore_collections.dart';
 import '../../../theme/app_theme.dart';
@@ -28,6 +31,13 @@ class DashboardService {
     required bool includeFinance,
     DashboardFilter? filter,
   }) async {
+    await requireNoSampleData(_firestore, [
+      'farm_modules',
+      'logbooks',
+      'schedules',
+      'batches',
+      'inventory',
+    ]);
     final now = _clock();
     final today = DashboardFilter.days(1, now: now);
     final period = filter ?? DashboardFilter.days(30, now: now);
@@ -47,6 +57,18 @@ class DashboardService {
             },
           )
         : Future<FinanceDashboardSummary?>.value(null);
+    Object? salesError;
+    final salesFuture = financeAllowed
+        ? SalesService(firestore: _firestore)
+              .summary(period.start, period.end)
+              .then<List<Sale>?>(
+                (v) => v,
+                onError: (Object e) {
+                  salesError = e;
+                  return null;
+                },
+              )
+        : Future<List<Sale>?>.value(null);
     final results = await Future.wait<Object?>([
       _count(
         _firestore
@@ -105,6 +127,7 @@ class DashboardService {
           .get(),
       getRecentCircularFlows(filter: period),
       financeFuture,
+      salesFuture,
     ]);
     final stockDocs = (results[8] as QuerySnapshot<Map<String, dynamic>>).docs;
     final inventory = stockDocs.take(200).map((doc) {
@@ -132,6 +155,19 @@ class DashboardService {
     final empty = inventory.where((item) => item.currentStock <= 0).toList();
     final finance = results[13] as FinanceDashboardSummary?;
     return DashboardSummary(
+      salesTotal: (results[14] as List<Sale>?)?.fold<int>(
+        0,
+        (total, s) => total + s.totalAmount,
+      ),
+      soldQuantities: {
+        for (final sale in (results[14] as List<Sale>? ?? []))
+          '${sale.productName} (${sale.unit})': (results[14] as List<Sale>)
+              .where(
+                (s) => s.productName == sale.productName && s.unit == sale.unit,
+              )
+              .fold<double>(0, (total, s) => total + s.quantity),
+      },
+      salesError: salesError,
       activeModuleCount: results[0] as int,
       todayLogCount: results[1] as int,
       todayScheduleCount: results[2] as int,
@@ -202,17 +238,11 @@ class DashboardService {
         .orderBy('flowDate', descending: true)
         .limit(limit)
         .get();
-    // Deterministic IDs from the old illustrative seed are never operational evidence.
-    const illustrativeIds = {
-      'tanaman_to_maggot_bsf',
-      'maggot_bsf_to_ayam_kampung',
-      'ayam_kampung_to_cacing_tanah',
-      'cacing_tanah_to_tanaman',
-      'lele_to_tanaman',
-    };
     return [
       for (final doc in snapshot.docs)
-        if (!illustrativeIds.contains(doc.id) &&
+        if (doc.data()['sourceType'] == 'manual' &&
+            '${doc.data()['createdBy'] ?? ''}'.isNotEmpty &&
+            !hasSampleMarker(doc.data()) &&
             doc.data()['isDeleted'] != true)
           if (finiteNumber(doc.data()['quantity']) case final double quantity
               when quantity > 0)
@@ -243,6 +273,9 @@ class DashboardService {
       start: startOfMonth ?? DateTime(now.year, now.month),
       end: endOfMonth ?? DateTime(now.year, now.month + 1),
     );
+    await requireNoSampleData(_firestore, [
+      FirestoreCollections.financeTransactions,
+    ]);
     final snapshot = await _range(
       FirestoreCollections.financeTransactions,
       'date',

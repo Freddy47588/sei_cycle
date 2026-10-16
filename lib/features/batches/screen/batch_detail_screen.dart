@@ -147,9 +147,9 @@ class _BatchDetailScreenState extends State<BatchDetailScreen> {
                 Text(
                   'Catatan: ${i.notes.isEmpty ? 'Belum ada data' : i.notes}',
                 ),
-                Text('Pembuat (UID): ${b.createdBy}'),
+                Text('Pembuat: ${b.createdBy}'),
                 Text('Dibuat: ${batchDate(b.createdAt)}'),
-                Text('Pengubah (UID): ${b.updatedBy}'),
+                Text('Pengubah: ${b.updatedBy}'),
                 Text('Diperbarui: ${batchDate(b.updatedAt)}'),
                 if (widget.canManage)
                   Wrap(

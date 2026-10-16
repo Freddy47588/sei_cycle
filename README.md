@@ -14,9 +14,20 @@ SeiCycle menggunakan **Firebase Authentication** untuk autentikasi dan **Cloud F
 - Inventaris, jadwal, keuangan, rekomendasi berbasis aturan, dan laporan PDF/Excel.
 - Katalog edukasi artikel, SOP, serta video dari teks/URL eksternal; thumbnail dan gambar lokal sebagai fallback. Pembaca detail lengkap dikembangkan pada Phase 07.
 - Notifikasi dalam aplikasi melalui inbox Firestore dan pengingat lokal. FCM saat ini terbatas pada permission/token client; pengiriman push terjadwal dari server belum tersedia.
-- Pengelolaan data admin yang sudah tersedia. Data sampel hanya dibuat melalui tindakan admin manual; pengujian UI tidak melakukan seed database.
+- Profil dan penyiapan lima modul operasional resmi; aplikasi tidak menyediakan pembuatan/penghapusan transaksi demo.
 
 Empat menu utama: **Dashboard, Logbook, Edukasi, Notifikasi**. Fitur tambahan di mobile tersedia melalui **Lainnya**. Sidebar tampil mulai lebar 768 px mengikuti shell asli `main`.
+
+## Finance, Penjualan dan Aliran Nutrisi — Phase 06
+
+- **Profil bersih dari demo:** fitur Seed/Hapus sampel dan service runtime sudah dihapus. Penyiapan lima modul operasional resmi tetap tersedia. Data produksi tidak dihapus; [prosedur audit/cleanup administratif](docs/PHASE_06_SAMPLE_DATA_CLEANUP.md) memerlukan review daftar aktual terlebih dahulu.
+- **Draft Logbook** bertahan saat berpindah menu selama sesi; draft dipisahkan per modul dan dibuang saat akun berganti/logout. Tidak menyimpan draft sebagai catatan final atau menulis ke Firebase sebelum Simpan.
+- **Keuangan** memiliki ringkasan pemasukan/pengeluaran/arus kas bersih, filter periode/jenis/kategori/modul, pencarian pada data dimuat, pagination dan detail audit. Form tetap terbuka ketika simpan gagal; retry menggunakan ID yang sama. Edit/soft delete manual menyimpan histori before/after; finance terkait sale tidak dapat diedit sepihak.
+- **Penjualan Hasil Panen:** admin menandai master hasil panen aktual sebagai layak dijual di Inventaris. Admin aktif mencatat penjualan lunas; operator keuangan dapat membaca. Sales, pengurangan stok, ledger keluar dan pemasukan disimpan atomik. Quantity maksimal tiga desimal; harga/total integer Rupiah dengan pembulatan half-up. Stok tidak boleh negatif. Receipt selesai permanen, tanpa cancel/reversal yang belum tersedia.
+- **Aliran Nutrisi Aktual:** pencatatan material, jumlah/satuan, sumber/tujuan, tanggal, batch dan referensi kegiatan opsional. Tidak mengubah stok atau menyimpan ilustrasi Dashboard sebagai transaksi. Dokumen lama tanpa provenance tetap terbaca dengan penjelasan bahwa belum terverifikasi.
+- Dashboard menampilkan ringkasan penjualan serta tautan aliran aktual. Laporan PDF/Excel memisahkan penjualan dari pemasukan agar tidak dihitung dua kali; akses finance mengikuti role. Ringkasan keuangan/penjualan maksimal500 transaksi, laporan maksimal1000 dokumen per sumber; jika melebihi batas, persempit periode/filter dan ekspor parsial tidak diklaim lengkap.
+
+Rules dan **93 composite indexes** perlu ditinjau/deploy manual sebelum menggunakan versi ini pada Firebase tujuan. Tidak ada deployment atau cleanup produksi otomatis. Detail kontrak, hasil pengujian, Android dan batas implementasi ada di [Phase 06](docs/PHASE_06_FINANCE_SALES_CIRCULAR_FLOW.md).
 
 ## Role dan akses UI
 

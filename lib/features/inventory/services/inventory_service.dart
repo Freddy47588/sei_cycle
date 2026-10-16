@@ -68,6 +68,7 @@ class InventoryService {
 
   Future<String> createItem({
     required String requestId,
+    bool isSellable = false,
     required String name,
     required String itemKey,
     required String moduleType,
@@ -89,6 +90,7 @@ class InventoryService {
     validateStockNumber(minStock);
     validateStockNumber(initialStock);
     final payload = jsonEncode([
+      isSellable,
       name.trim(),
       itemKey.trim(),
       moduleType,
@@ -101,7 +103,10 @@ class InventoryService {
     ]);
     final ref = _collection.doc(requestId);
     await runOperationalTransaction(_firestore, (tx) async {
-      await authorizeOperations(_firestore, tx, userId);
+      final actor = await authorizeOperations(_firestore, tx, userId);
+      if (isSellable && !actor.isAdmin) {
+        throw StateError('Klasifikasi produk jual hanya oleh admin.');
+      }
       final prior = await tx.get(ref);
       if (prior.exists) {
         if (prior.data()?['creationPayload'] != payload) {
@@ -113,6 +118,8 @@ class InventoryService {
       final historyId = 'opening_$requestId';
       tx.set(ref, {
         'id': requestId,
+        'isSellable': isSellable,
+        'productType': isSellable ? 'harvest' : 'operational',
         'name': name.trim(),
         'itemKey': itemKey.trim(),
         'moduleType': moduleType,
@@ -157,6 +164,7 @@ class InventoryService {
 
   Future<void> saveMetadata({
     required InventoryItem item,
+    bool? isSellable,
     required String name,
     required String category,
     required String location,
@@ -167,7 +175,12 @@ class InventoryService {
     requireTrimmed(category, 'Kategori');
     validateStockNumber(minStock);
     await runOperationalTransaction(_firestore, (tx) async {
-      await authorizeOperations(_firestore, tx, userId);
+      final actor = await authorizeOperations(_firestore, tx, userId);
+      if (isSellable != null &&
+          isSellable != item.isSellable &&
+          !actor.isAdmin) {
+        throw StateError('Klasifikasi produk jual hanya oleh admin.');
+      }
       final ref = _collection.doc(item.id);
       final current = await tx.get(ref);
       if (!current.exists ||
@@ -176,6 +189,9 @@ class InventoryService {
         throw StateError('Barang telah berubah. Muat ulang sebelum mengedit.');
       }
       tx.update(ref, {
+        'isSellable': ?isSellable,
+        if (isSellable != null)
+          'productType': isSellable ? 'harvest' : 'operational',
         'name': name.trim(),
         'category': category.trim(),
         'location': location.trim(),

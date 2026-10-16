@@ -1,5 +1,11 @@
+import '../../../core/constants/farm_modules.dart';
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:convert';
+import '../../../core/models/firestore_page.dart';
+import '../../../core/utils/operational_auth.dart';
+import '../../profile/models/app_user.dart';
 
 import '../../../core/constants/firestore_collections.dart';
 import '../../../core/utils/firestore_validators.dart';
@@ -22,6 +28,7 @@ class FinanceService {
     return _collection
         .where('isDeleted', isEqualTo: false)
         .orderBy('date', descending: true)
+        .limit(100)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs.map(FinanceRecord.fromDocument).toList(),
@@ -38,14 +45,35 @@ class FinanceService {
   Future<FinanceSummary> loadSummaryByDateRange({
     required DateTime start,
     required DateTime end,
+    String? type,
+    String? category,
+    String? moduleType,
   }) async {
     _validateDateRange(start: start, end: end);
-    final snapshot = await _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('date', isLessThan: Timestamp.fromDate(end))
-        .orderBy('date')
-        .get();
+    await requireNoSampleData(_firestore, ['finance_transactions']);
+    final snapshot = await _query(
+      start: start,
+      end: end,
+      type: type,
+      category: category,
+      moduleType: moduleType,
+    ).limit(501).get();
+    if (snapshot.docs.length > 500) {
+      throw StateError(
+        'Lebih dari 500 transaksi. Persempit periode/filter untuk ringkasan lengkap.',
+      );
+    }
+    for (final doc in snapshot.docs) {
+      final d = doc.data();
+      if (d['amount'] is! num ||
+          !(d['amount'] as num).isFinite ||
+          (d['amount'] as num) <= 0 ||
+          !_validTypes.contains(d['type'])) {
+        throw StateError(
+          'Transaksi tidak valid. Ringkasan memerlukan pemeriksaan pengelola.',
+        );
+      }
+    }
     return cashflowSummary(
       snapshot.docs.map(FinanceRecord.fromDocument),
       start: start,
@@ -61,8 +89,60 @@ class FinanceService {
     return monthlyProfitLoss(records, month: anchor);
   }
 
+  Query<Map<String, dynamic>> _query({
+    required DateTime start,
+    required DateTime end,
+    String? type,
+    String? category,
+    String? moduleType,
+  }) {
+    _validateDateRange(start: start, end: end);
+    Query<Map<String, dynamic>> q = _collection
+        .where('isDeleted', isEqualTo: false)
+        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('date', isLessThan: Timestamp.fromDate(end));
+    if (type != null) q = q.where('type', isEqualTo: type);
+    if (category != null) q = q.where('category', isEqualTo: category);
+    if (moduleType != null) q = q.where('moduleType', isEqualTo: moduleType);
+    return q.orderBy('date', descending: true);
+  }
+
+  Future<FirestorePage<FinanceRecord>> fetchPage({
+    required DateTime start,
+    required DateTime end,
+    String? type,
+    String? category,
+    String? moduleType,
+    DocumentSnapshot<Map<String, dynamic>>? cursor,
+  }) async {
+    var q = _query(
+      start: start,
+      end: end,
+      type: type,
+      category: category,
+      moduleType: moduleType,
+    ).limit(20);
+    if (cursor != null) q = q.startAfterDocument(cursor);
+    final page = await q.get();
+    return FirestorePage(
+      page.docs.map(FinanceRecord.fromDocument).toList(),
+      page.docs.lastOrNull,
+      page.docs.length == 20,
+    );
+  }
+
+  Future<AppUser> _authorize(Transaction tx, String uid) async {
+    final doc = await tx.get(_firestore.collection('users').doc(uid));
+    if (!doc.exists || !AppUser.fromDocument(doc).canManageFinance) {
+      throw StateError('Tidak memiliki izin keuangan.');
+    }
+    return AppUser.fromDocument(doc);
+  }
+
   Future<void> save({
     String? id,
+    String? requestId,
+    DateTime? expectedUpdatedAt,
     required String type,
     required String category,
     required double amount,
@@ -80,11 +160,17 @@ class FinanceService {
       date: date,
       userId: userId,
     );
-
-    final documentId = id ?? _uuid.v4();
-    final now = FieldValue.serverTimestamp();
-    final data = <String, dynamic>{
-      'id': documentId,
+    if (!{
+      '',
+      ...FarmModules.values.map((m) => m.id),
+    }.contains(moduleType.trim())) {
+      throw ArgumentError('Modul keuangan tidak valid.');
+    }
+    final rid = requestId ?? _uuid.v4();
+    validateDocumentId(rid);
+    final documentId = id ?? rid;
+    validateDocumentId(documentId);
+    final fields = <String, dynamic>{
       'type': normalizedType,
       'category': category.trim(),
       'amount': amount,
@@ -93,24 +179,135 @@ class FinanceService {
       'notes': note.trim(),
       'paymentMethod': paymentMethod.trim(),
       'moduleType': moduleType.trim(),
-      'updatedBy': userId,
-      'updatedAt': now,
       'isDeleted': false,
     };
-    if (id == null) {
-      data['createdBy'] = userId;
-      data['createdAt'] = now;
-    }
-    await _collection.doc(documentId).set(data, SetOptions(merge: true));
+    final payload = jsonEncode([
+      normalizedType,
+      category.trim(),
+      amount,
+      date.microsecondsSinceEpoch,
+      note.trim(),
+      paymentMethod.trim(),
+      moduleType.trim(),
+      userId,
+    ]);
+    final ref = _collection.doc(documentId);
+    await runOperationalTransaction(_firestore, (tx) async {
+      await _authorize(tx, userId);
+      final prior = await tx.get(ref);
+      final now = FieldValue.serverTimestamp();
+      if (id == null) {
+        if (prior.exists) {
+          if (prior.data()?['creationPayload'] != payload ||
+              prior.data()?['createdBy'] != userId) {
+            throw StateError('Request ID sama dengan payload berbeda.');
+          }
+          return;
+        }
+        tx.set(ref, {
+          ...fields,
+          'id': documentId,
+          'requestId': rid,
+          'creationPayload': payload,
+          'source': 'manual',
+          'version': 0,
+          'createdBy': userId,
+          'updatedBy': userId,
+          'createdAt': now,
+          'updatedAt': now,
+        });
+      } else {
+        final d = prior.data();
+        final auditRef = ref.collection('edits').doc(rid);
+        final audit = await tx.get(auditRef);
+        if (audit.exists) {
+          if (audit.data()?['payload'] != payload ||
+              audit.data()?['editedBy'] != userId) {
+            throw StateError('Request ID sama dengan payload berbeda.');
+          }
+          return;
+        }
+        if (!prior.exists ||
+            d?['isDeleted'] != false ||
+            (d?['saleId'] != null && d?['saleId'] != '') ||
+            d?['source'] == 'sale') {
+          throw StateError(
+            'Transaksi terintegrasi atau terhapus tidak dapat diedit manual.',
+          );
+        }
+        if (expectedUpdatedAt == null ||
+            FinanceRecord.fromDocument(prior).updatedAt != expectedUpdatedAt) {
+          throw StateError(
+            'Transaksi telah berubah. Muat ulang sebelum mengedit.',
+          );
+        }
+        final after = {
+          ...d!,
+          ...fields,
+          'version': (d['version'] as int? ?? 0) + 1,
+          'lastEditId': rid,
+          'updatedBy': userId,
+          'updatedAt': now,
+        };
+        tx.set(auditRef, {
+          'before': d,
+          'after': after,
+          'payload': payload,
+          'editedBy': userId,
+          'editedAt': now,
+        });
+        tx.set(ref, after);
+      }
+    });
   }
 
-  Future<void> delete(String id, {required String userId}) {
-    requireTrimmed(id, 'id');
-    requireTrimmed(userId, 'userId');
-    return _collection.doc(id).update({
-      'isDeleted': true,
-      'updatedBy': userId,
-      'updatedAt': FieldValue.serverTimestamp(),
+  Future<void> delete(
+    String id, {
+    required String userId,
+    required DateTime expectedUpdatedAt,
+    required String requestId,
+  }) async {
+    validateDocumentId(id);
+    validateDocumentId(requestId);
+    final ref = _collection.doc(id);
+    await runOperationalTransaction(_firestore, (tx) async {
+      await _authorize(tx, userId);
+      final old = await tx.get(ref);
+      final d = old.data();
+      final auditRef = ref.collection('edits').doc(requestId);
+      final audit = await tx.get(auditRef);
+      if (audit.exists &&
+          audit.data()?['payload'] == 'delete' &&
+          audit.data()?['editedBy'] == userId) {
+        return;
+      }
+      if (!old.exists ||
+          d?['source'] == 'sale' ||
+          (d?['saleId'] != null && d?['saleId'] != '') ||
+          d?['isDeleted'] != false ||
+          FinanceRecord.fromDocument(old).updatedAt != expectedUpdatedAt ||
+          audit.exists) {
+        throw StateError(
+          'Transaksi berubah atau terintegrasi. Penghapusan manual ditolak.',
+        );
+      }
+      final now = FieldValue.serverTimestamp();
+      final after = {
+        ...d!,
+        'isDeleted': true,
+        'version': (d['version'] as int? ?? 0) + 1,
+        'lastEditId': requestId,
+        'updatedBy': userId,
+        'updatedAt': now,
+      };
+      tx.set(auditRef, {
+        'before': d,
+        'after': after,
+        'payload': 'delete',
+        'editedBy': userId,
+        'editedAt': now,
+      });
+      tx.set(ref, after);
     });
   }
 
@@ -124,6 +321,9 @@ class FinanceService {
     requireOneOf(type, _validTypes, 'type');
     requireTrimmed(category, 'category');
     requirePositive(amount, 'amount');
+    if (!amount.isFinite || amount > 1e12) {
+      throw ArgumentError('Nominal harus finite dan maksimal Rp1 triliun.');
+    }
     _requireValidDate(date, 'date');
     requireTrimmed(userId, 'userId');
   }

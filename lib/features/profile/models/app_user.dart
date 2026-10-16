@@ -34,11 +34,11 @@ class AppUser {
 
   bool get canViewDashboard => isActive;
   bool get canViewEducation => isActive;
-  bool get canManageEducation => isAdmin;
-  bool get canDeleteEducation => isAdmin;
-  bool get canManageFarmModules => isAdmin;
-  bool get canManageUsers => isAdmin;
-  bool get canDeleteUsers => isAdmin;
+  bool get canManageEducation => isActive && isAdmin;
+  bool get canDeleteEducation => isActive && isAdmin;
+  bool get canManageFarmModules => isActive && isAdmin;
+  bool get canManageUsers => isActive && isAdmin;
+  bool get canDeleteUsers => isActive && isAdmin;
 
   bool get canViewBatches => isActive;
   bool get canManageBatches => isActive && (isAdmin || isOperatorLapangan);
@@ -54,8 +54,12 @@ class AppUser {
   bool get canDeleteSchedules => isActive && isAdmin;
 
   bool get canViewFinance => isActive && (isAdmin || isOperatorKeuangan);
-  bool get canManageFinance => isAdmin || isOperatorKeuangan;
-  bool get canDeleteFinance => isAdmin || isOperatorKeuangan;
+  bool get canManageFinance => canViewFinance;
+  bool get canDeleteFinance => canManageFinance;
+  bool get canViewSales => canViewFinance;
+  bool get canManageSales => isActive && isAdmin;
+  bool get canViewCircularFlows => isActive;
+  bool get canManageCircularFlows => canManageLogbooks;
   bool get canViewFinanceDashboard => canViewFinance;
   bool get canViewRecommendations => isActive;
 

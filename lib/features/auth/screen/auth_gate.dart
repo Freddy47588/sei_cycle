@@ -96,7 +96,7 @@ class _AuthGateState extends State<AuthGate> {
                 if (!profile.isActive) {
                   return _InactiveAccount(authService: _authService);
                 }
-                return AppShell(profile: profile);
+                return AppShell(key: ValueKey(profile.uid), profile: profile);
               },
             );
           },

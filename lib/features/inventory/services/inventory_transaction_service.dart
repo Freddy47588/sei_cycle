@@ -14,6 +14,37 @@ class InventoryTransactionService {
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(FirestoreCollections.inventoryTransactions);
 
+  Future<FirestorePage<HistoryReference>> references(
+    String field, {
+    DocumentSnapshot<Map<String, dynamic>>? cursor,
+  }) async {
+    final (collection, order, label) = switch (field) {
+      'itemId' => ('inventory', 'name', 'name'),
+      'batchId' => ('batches', 'createdAt', 'name'),
+      'logbookId' => ('logbooks', 'activityDate', 'title'),
+      _ => throw ArgumentError('Pilih barang, batch atau Logbook.'),
+    };
+    var q = _firestore
+        .collection(collection)
+        .where('isDeleted', isEqualTo: false)
+        .orderBy(order, descending: order != 'name')
+        .limit(20);
+    if (cursor != null) q = q.startAfterDocument(cursor);
+    final page = await q.get();
+    return FirestorePage(
+      page.docs
+          .map(
+            (d) => HistoryReference(
+              d.id,
+              '${d.data()[label] ?? d.id}${d.data()["code"] == null ? "" : " (${d.data()["code"]})"}',
+            ),
+          )
+          .toList(),
+      page.docs.lastOrNull,
+      page.docs.length == 20,
+    );
+  }
+
   Future<List<InventoryTransaction>> getTransactionsByLogbookId(
     String logbookId,
   ) async {
@@ -84,4 +115,9 @@ class InventoryTransactionService {
   }) async {
     throw UnsupportedError('Pembalikan transaksi belum diaktifkan.');
   }
+}
+
+class HistoryReference {
+  const HistoryReference(this.id, this.label);
+  final String id, label;
 }

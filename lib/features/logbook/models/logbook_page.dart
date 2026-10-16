@@ -4,11 +4,13 @@ import 'logbook_entry.dart';
 class LogbookFilter {
   const LogbookFilter({
     this.moduleId,
+    this.batchId,
     this.start,
     this.endExclusive,
     this.newestFirst = true,
   });
   final String? moduleId;
+  final String? batchId;
   final DateTime? start;
   final DateTime? endExclusive;
   final bool newestFirst;

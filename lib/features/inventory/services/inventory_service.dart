@@ -167,6 +167,7 @@ class InventoryService {
     required DocumentSnapshot<Map<String, dynamic>> snapshot,
     required String logbookId,
     required String transactionId,
+    String? batchId,
     required String userId,
   }) {
     final action = target.action;
@@ -219,6 +220,7 @@ class InventoryService {
         'itemKey': action.itemKey,
         'moduleType': action.moduleType ?? '',
         'logbookId': logbookId,
+        'batchId': ?batchId,
         'type': action.type,
         'quantity': action.quantity,
         'unit': action.unit,

@@ -616,6 +616,7 @@ class _RecordingLogbookService extends LogbookService {
   @override
   Future<String> createDailyEntry({
     String? requestId,
+    String? batchId,
     required String moduleType,
     required String title,
     required String activityType,

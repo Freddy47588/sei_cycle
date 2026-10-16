@@ -70,3 +70,26 @@ Daftar ini mengikuti query Flutter saat ini. Buat index lewat Firebase Console b
 - Query notifikasi memakai OR untuk personal dan role/global. Jika Firebase Console meminta index tambahan, buat dari link error dan update file ini.
 - File deployable index berada di `firestore.indexes.json` dan sudah direferensikan oleh `firebase.json`.
 - Jangan membuat collection tambahan untuk file laporan atau media; batasan MVP tetap tanpa Storage dan tanpa backend server.
+
+
+## Phase 03: query batch yang dipakai
+
+Sembilan index ditambahkan ke `firestore.indexes.json`, tanpa mengubah index existing:
+
+| Collection | Equality fields (ASC) | Order |
+| --- | --- | --- |
+| `batches` | `isDeleted` | `createdAt ASC` dan `DESC` (2 index) |
+| `batches` | `isDeleted`, `moduleType` | `createdAt ASC` dan `DESC` (2 index) |
+| `batches` | `isDeleted`, `status` | `createdAt ASC` dan `DESC` (2 index) |
+| `batches` | `isDeleted`, `moduleType`, `status` | `createdAt ASC` dan `DESC` (2 index) |
+| `logbooks` | `isDeleted`, `batchId` | `activityDate DESC` (1 index) |
+
+Daftar/pemilih batch memakai `limit(20)` dan `startAfterDocument(cursor)`. Pemilih hanya query modul terkait + status active; urutan masih dapat dipilih. Aktivitas batch memakai limit/cursor 20 catatan, tanpa filter modul tambahan karena batch sudah memiliki modul tetap. Pencarian nama/kode hanya di hasil yang dimuat. Tidak ada index produksi per batch karena Phase 03 tidak melakukan query tersebut.
+
+Emulator membuktikan bentuk query dan pagination, bukan ketersediaan composite index produksi. Deployment harus dilakukan manual sesudah review dan persetujuan pengelola terhadap project tujuan:
+
+```bash
+firebase deploy --only firestore:rules,firestore:indexes --project <project-yang-disetujui>
+```
+
+Perintah ini adalah petunjuk untuk pengelola dan tidak dijalankan dalam pengerjaan Phase 03. Tunggu index selesai dibangun sebelum uji perangkat.

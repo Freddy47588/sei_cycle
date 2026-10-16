@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_theme.dart';
+import '../../batches/models/cultivation_batch.dart';
+import '../../batches/screen/batch_list_screen.dart';
 import '../../inventory/services/inventory_service.dart';
 import '../../profile/models/app_user.dart';
 import 'package:uuid/uuid.dart';
@@ -22,6 +24,7 @@ class LogbookScreen extends StatefulWidget {
 class _LogbookScreenState extends State<LogbookScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late final _service = widget.service ?? LogbookService();
 
   static const _tabs = [
     _TabInfo('Ayam', Icons.egg_alt_outlined),
@@ -47,7 +50,23 @@ class _LogbookScreenState extends State<LogbookScreen>
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _LogbookHeader(tabController: _tabController, tabs: _tabs),
+        _LogbookHeader(
+          tabController: _tabController,
+          tabs: _tabs,
+          onManageBatches: widget.profile.canViewBatches
+              ? () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => BatchListScreen(
+                      service: _service.batches,
+                      logbookService: _service,
+                      userId: widget.profile.uid,
+                      canManage: widget.profile.canManageBatches,
+                    ),
+                  ),
+                )
+              : null,
+        ),
         Expanded(
           child: TabBarView(
             controller: _tabController,
@@ -98,7 +117,12 @@ class _TabInfo {
 }
 
 class _LogbookHeader extends StatelessWidget {
-  const _LogbookHeader({required this.tabController, required this.tabs});
+  const _LogbookHeader({
+    required this.tabController,
+    required this.tabs,
+    this.onManageBatches,
+  });
+  final VoidCallback? onManageBatches;
 
   final TabController tabController;
   final List<_TabInfo> tabs;
@@ -129,6 +153,15 @@ class _LogbookHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (onManageBatches != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: OutlinedButton.icon(
+                onPressed: onManageBatches,
+                icon: const Icon(Icons.layers_outlined),
+                label: const Text('Kelola Batch'),
+              ),
+            ),
           TabBar(
             controller: tabController,
             isScrollable: true,
@@ -473,7 +506,11 @@ class _LeleModuleState extends _ModuleFormState<LeleModule> {
   LogbookService? get injectedService => widget.service;
 }
 
-abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
+abstract class _ModuleFormState<T extends StatefulWidget> extends State<T>
+    with AutomaticKeepAliveClientMixin<T> {
+  @override
+  bool get wantKeepAlive => true;
+  CultivationBatch? _batch;
   late final _service = injectedService ?? LogbookService();
   final _values = <String, String>{};
   bool _saving = false;
@@ -530,6 +567,7 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
       }
       final savedId = await _service.createDailyEntry(
         requestId: _requestId,
+        batchId: _batch?.id,
         moduleType: spec.moduleType,
         title: spec.title,
         activityType: spec.activityType,
@@ -650,6 +688,29 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
         : trimmed;
   }
 
+  Future<void> _chooseBatch() async {
+    final selected = await Navigator.push<CultivationBatch>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BatchListScreen(
+          service: _service.batches,
+          logbookService: _service,
+          userId: userId,
+          canManage: canSave,
+          initialModule: spec.moduleType,
+          selectActive: true,
+        ),
+      ),
+    );
+    if (selected != null && mounted && selected.id != _batch?.id) {
+      setState(() {
+        _batch = selected;
+        _saved = false;
+        _requestId = const Uuid().v4();
+      });
+    }
+  }
+
   List<_BannerStat> _bannerStats() {
     String value(String key, String unit, {String fallback = '-'}) {
       final raw = (_values[key] ?? '').trim();
@@ -695,6 +756,7 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return AbsorbPointer(
       absorbing: _saving,
       child: SingleChildScrollView(
@@ -711,6 +773,43 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
               stats: _bannerStats(),
             ),
             const SizedBox(height: 20),
+            _FormCard(
+              title: 'Batch Budidaya',
+              icon: Icons.layers_outlined,
+              color: spec.color,
+              children: [
+                Text(
+                  _batch == null
+                      ? 'Tanpa Batch - aktivitas umum'
+                      : '${_batch!.input.name} (${_batch!.input.code})',
+                ),
+                const Text(
+                  'Pilih batch aktif yang sesuai modul. Tanpa Batch tersedia untuk aktivitas umum lintas siklus.',
+                ),
+                Wrap(
+                  spacing: 12,
+                  children: [
+                    OutlinedButton(
+                      onPressed: canSave ? _chooseBatch : null,
+                      child: Text(
+                        'Pilih batch ${spec.label.replaceFirst('Modul ', '').toLowerCase()} yang aktif',
+                      ),
+                    ),
+                    if (_batch != null)
+                      TextButton(
+                        onPressed: canSave
+                            ? () => setState(() {
+                                _batch = null;
+                                _saved = false;
+                                _requestId = const Uuid().v4();
+                              })
+                            : null,
+                        child: const Text('Tanpa Batch'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
             LayoutBuilder(
               builder: (context, c) {
                 return Column(

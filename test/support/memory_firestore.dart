@@ -8,6 +8,7 @@ class MemoryFirestore implements FirebaseFirestore {
   bool failCommit = false;
   bool commitThenDeny = false;
   bool retryOnce = false;
+  void Function()? beforeRetry;
   int _id = 0;
   @override
   CollectionReference<Map<String, dynamic>> collection(String path) =>
@@ -22,6 +23,7 @@ class MemoryFirestore implements FirebaseFirestore {
     var result = await transactionHandler(tx);
     if (retryOnce) {
       retryOnce = false;
+      beforeRetry?.call();
       tx = MemoryTransaction(this);
       result = await transactionHandler(tx);
     }

@@ -5,6 +5,7 @@ import '../../../core/utils/firestore_fields.dart';
 class LogbookEntry {
   const LogbookEntry({
     required this.id,
+    this.batchId,
     String? title,
     required this.moduleId,
     required this.activityType,
@@ -26,6 +27,7 @@ class LogbookEntry {
        details = details ?? const <String, dynamic>{};
 
   final String id;
+  final String? batchId;
   final String title;
   final String moduleId;
   final String activityType;
@@ -50,6 +52,7 @@ class LogbookEntry {
     final data = document.data() ?? const <String, dynamic>{};
     return LogbookEntry(
       id: document.id,
+      batchId: data['batchId'] as String?,
       title: stringField(data, const ['title'], fallback: 'Catatan Logbook'),
       moduleId: stringField(data, const ['moduleType', 'module_id']),
       activityType: stringField(data, const ['activityType', 'activity_type']),
@@ -74,6 +77,7 @@ class LogbookEntry {
   Map<String, dynamic> toFirestore() {
     return {
       'id': id,
+      if (batchId != null) 'batchId': batchId,
       'title': title,
       'moduleType': moduleId,
       'activityDate': Timestamp.fromDate(activityDate),

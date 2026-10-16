@@ -327,6 +327,11 @@ class _LogbookCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
+              Text(
+                entry.batchId == null
+                    ? 'Belum terhubung ke batch'
+                    : 'Batch: ${entry.batchId}',
+              ),
               Text(entry.title, style: Theme.of(context).textTheme.titleMedium),
               Text(
                 DateFormat(

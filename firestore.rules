@@ -324,6 +324,65 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Phase 03: deterministic code/document ID makes uniqueness atomic.
+    function validBatch(id, d) {
+      return d.keys().hasAll(['id', 'name', 'code', 'moduleType', 'locationName',
+          'status', 'startedAt', 'expectedHarvestAt', 'completedAt', 'initialQuantity',
+          'initialUnit', 'commodity', 'notes', 'createdBy', 'updatedBy',
+          'createdAt', 'updatedAt', 'isDeleted'])
+        && d.keys().hasOnly(['id', 'name', 'code', 'moduleType', 'locationName',
+          'status', 'startedAt', 'expectedHarvestAt', 'completedAt', 'initialQuantity',
+          'initialUnit', 'commodity', 'notes', 'createdBy', 'updatedBy',
+          'createdAt', 'updatedAt', 'isDeleted'])
+        && d.id == id && d.code == id
+        && d.code is string && d.code.matches('^[A-Z0-9][A-Z0-9_-]{2,39}$')
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120 && d.name.matches('.*[^ \\t\\r\\n].*')
+        && d.locationName is string && d.locationName.size() > 0 && d.locationName.size() <= 120 && d.locationName.matches('.*[^ \\t\\r\\n].*')
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.status in ['planned', 'active', 'completed', 'archived']
+        && d.startedAt is timestamp
+        && (d.expectedHarvestAt == null || (d.expectedHarvestAt is timestamp && d.expectedHarvestAt >= d.startedAt))
+        && ((d.status in ['planned', 'active'] && d.completedAt == null)
+          || (d.status in ['completed', 'archived'] && d.completedAt is timestamp))
+        && d.initialUnit is string && d.initialUnit.size() <= 30
+        && (d.initialQuantity == null || (d.initialQuantity is number && d.initialQuantity >= 0
+          && d.initialQuantity <= 1000000000000000 && d.initialUnit.size() > 0 && d.initialUnit.matches('.*[^ \\t\\r\\n].*')))
+        && d.commodity is string && d.commodity.size() <= 120
+        && d.notes is string && d.notes.size() <= 3000
+        && d.createdBy is string && d.updatedBy is string
+        && d.createdAt is timestamp && d.updatedAt is timestamp && d.isDeleted == false;
+    }
+    function validBatchTransition() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'completedAt', 'updatedBy', 'updatedAt'])
+        && ((resource.data.status == 'planned' && request.resource.data.status == 'active')
+          || (resource.data.status == 'active' && request.resource.data.status == 'completed'
+            && request.resource.data.completedAt == request.time)
+          || (resource.data.status == 'completed' && request.resource.data.status == 'archived'
+            && request.resource.data.completedAt == resource.data.completedAt));
+    }
+    match /batches/{batchId} {
+      allow read: if canViewAppData();
+      allow create: if canManageOperations() && validBatch(batchId, request.resource.data)
+        && createsOwnDocument(batchId) && request.resource.data.status == 'planned'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if canManageOperations() && validBatch(batchId, request.resource.data)
+        && updatesExistingDocument() && request.resource.data.updatedAt == request.time
+        && (validBatchTransition() || (
+          resource.data.status in ['planned', 'active']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'locationName', 'expectedHarvestAt', 'commodity', 'notes', 'updatedBy', 'updatedAt'])));
+      allow delete: if false;
+    }
+    function validLogbookBatch(d) {
+      return !('batchId' in d) || (d.batchId is string && d.batchId.size() > 0
+        && existsAfter(/databases/$(database)/documents/batches/$(d.batchId))
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.isDeleted == false
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.status == 'active'
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.moduleType == d.moduleType);
+    }
+
     /*
       LOGBOOK OPERASIONAL
       Semua user login bisa lihat tampilan.
@@ -334,6 +393,7 @@ service cloud.firestore {
       allow read: if canViewAppData();
 
       allow create: if canManageOperations()
+        && validLogbookBatch(request.resource.data)
         && createsOwnDocument(logbookId)
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;

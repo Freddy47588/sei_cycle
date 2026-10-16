@@ -177,6 +177,7 @@ class _LogbookDetailScreenState extends State<LogbookDetailScreen> {
                       entry.title,
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
+                    _line('Batch', entry.batchId ?? 'Belum terhubung ke batch'),
                     _line('Modul', FarmModules.nameOf(entry.moduleId)),
                     _line(
                       'Jenis aktivitas',

@@ -40,6 +40,20 @@ Pencarian judul/catatan memakai debounce 350 ms dan hanya mencakup halaman yang 
 
 Perubahan catatan tambahan tidak mengubah stok atau hasil produksi. Pembatalan/penghapusan serta koreksi kuantitas memerlukan mekanisme koreksi terintegrasi dan belum tersedia. Rules Phase 02 harus diterapkan oleh pengelola sebelum menggunakan edit dengan audit trail; pekerjaan ini tidak melakukan deployment produksi. Lihat [dokumentasi Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md) untuk batas mapping dan keamanan data.
 
+## Manajemen Batch Budidaya
+
+Batch adalah identitas kelompok atau siklus untuk **Ayam, Maggot BSF, Cacing Tanah, Tanaman, dan Lele**. Modul dan form Logbook original tetap digunakan; tidak ada menu utama tambahan.
+
+1. Buka **Logbook > Kelola Batch > Tambah Batch**. Isi modul, nama, kode unik, lokasi dan tanggal mulai. Jumlah awal beserta unit, komoditas, estimasi panen dan catatan bersifat opsional.
+2. Batch baru **Direncanakan**. Buka Detail Batch dan pilih **Ubah ke Aktif** untuk mulai mencatat aktivitas.
+3. Pada form Logbook modul terkait, tekan **Pilih batch ... yang aktif**, pilih batch secara eksplisit, lalu **Simpan Catatan**. **Tanpa Batch** tersedia untuk aktivitas umum lintas siklus. Catatan lama berlabel **Belum terhubung ke batch**; aplikasi tidak menebak relasi.
+4. Buka Detail Batch untuk identitas, metadata audit, ringkasan aktivitas pada halaman yang dimuat, dan **Aktivitas Batch > Lihat Detail Logbook**. Filter modul/status, pencarian nama/kode pada data termuat, urutan dan pagination tersedia di daftar batch.
+5. Siklus: **Direncanakan > Aktif > Selesai > Diarsipkan**. Selesai/arsip tetap memiliki riwayat dan tidak menerima catatan baru. Perubahan status tidak membuat panen atau mengubah stok.
+
+Admin dan operator lapangan aktif dapat mengelola batch; operator keuangan serta mitra/peserta edukasi hanya membaca. Role lama `operator` tetap mengikuti operator lapangan. Kode, modul, tanggal mulai dan data awal tidak dapat diubah setelah dibuat. Kode unik secara global memakai ID dokumen deterministik dan tidak digunakan ulang.
+
+Rules dan sembilan index tambahan Phase 03 perlu ditinjau dan diterapkan secara manual oleh pengelola sebelum fitur digunakan pada lingkungan tujuan. Tidak ada deployment otomatis. Lihat [Phase 03](docs/PHASE_03_BATCH_MANAGEMENT.md) untuk kontrak transaksi, hasil pengujian dan batas verifikasi.
+
 ## Instalasi dan konfigurasi
 
 Prasyarat: Flutter stable, Dart sesuai `pubspec.yaml`, project Firebase, dan perangkat/emulator. Versi pengujian Phase 01: Flutter 3.44.2, Dart 3.12.2.

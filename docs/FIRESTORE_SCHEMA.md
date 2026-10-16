@@ -1,6 +1,6 @@
 # Firestore Schema SeiCycle
 
-Schema ini adalah kontrak MVP Flutter + Firebase langsung. Tidak ada Firebase Storage, Cloud Functions, atau backend server. Semua timestamp disimpan sebagai Firestore `Timestamp`; data operasional memakai UUID dari Flutter sebagai document ID dan field `id`.
+Schema ini adalah kontrak MVP Flutter + Firebase langsung. Tidak ada Firebase Storage, Cloud Functions, atau backend server. Semua timestamp disimpan sebagai Firestore `Timestamp`; sebagian besar data operasional memakai UUID dari Flutter sebagai document ID dan field `id`. Pengecualian batch menggunakan kode unik yang dinormalisasi sebagai ID deterministik.
 
 Nama field canonical memakai camelCase. Model Dart masih membaca beberapa field snake_case lama sebagai fallback agar dokumen lama tidak langsung menyebabkan null error, tetapi write baru harus mengikuti schema di bawah.
 
@@ -9,6 +9,7 @@ Nama field canonical memakai camelCase. Model Dart masih membaca beberapa field 
 | Collection | Status | Keterangan |
 | --- | --- | --- |
 | `users` | aktif | Profil Firebase Auth dan role aplikasi. |
+| `batches` | aktif | Identitas kelompok/siklus budidaya lima modul. |
 | `logbooks` | aktif | Catatan aktivitas operasional per moduleType. |
 | `inventory` | aktif | Stok dan kebutuhan operasional. |
 | `inventory_transactions` | aktif | Histori perubahan stok otomatis dari Logbook. |
@@ -340,3 +341,29 @@ Rekomendasi tahap awal dibuat on-demand di Flutter oleh `RecommendationService`.
 Collection ini hanya untuk snapshot opsional agar tidak boros write Firestore.
 Tidak ada machine learning cloud, API AI berbayar, Cloud Functions, atau backend
 server untuk membuat rekomendasi otomatis.
+
+
+## Phase 03: `batches/{normalizedCode}`
+
+| Field | Tipe / kontrak |
+| --- | --- |
+| `id`, `code` | String sama dengan document ID; kode uppercase 3-40 karakter `[A-Z0-9][A-Z0-9_-]{2,39}`; unik global dan immutable |
+| `name`, `locationName` | String wajib 1-120 karakter |
+| `moduleType` | `ayam_kampung`, `maggot_bsf`, `cacing_tanah`, `tanaman`, `lele`; immutable |
+| `status` | `planned`, `active`, `completed`, `archived`; hanya maju satu tahap |
+| `startedAt` | Timestamp tanggal mulai; immutable |
+| `expectedHarvestAt` | Timestamp atau null; tidak sebelum startedAt |
+| `completedAt` | null sebelum selesai; server timestamp saat active menjadi completed; tetap saat archived |
+| `initialQuantity` | Number nonnegatif hingga 10^15 atau null; finite dan immutable |
+| `initialUnit` | String maksimal 30 karakter; wajib bila quantity ada; immutable |
+| `commodity` | String opsional maksimal 120 karakter |
+| `notes` | String opsional maksimal 3000 karakter |
+| `createdBy`, `updatedBy` | UID; penulis harus UID autentikasi |
+| `createdAt`, `updatedAt` | Server timestamp; createdAt immutable |
+| `isDeleted` | false; tidak ada aksi delete/soft delete |
+
+ID bawaan form adalah `B-<UUID-v4>` uppercase. Pengguna dapat memasukkan kode pendek sebelum create. Transaksi membaca dokumen berkode tersebut dan hanya membuat bila belum ada; Rules mengunci code == ID sehingga client lain tidak dapat membuat dokumen kedua dengan kode sama. Tidak ada koleksi reservasi tambahan atau subcollection Logbook di batch.
+
+`logbooks.batchId` opsional untuk kompatibilitas/aktivitas umum. Bila disertakan harus string ID batch aktif, tidak dihapus, dan moduleType sama. Rules menggunakan kondisi sesudah transaksi (`getAfter`) untuk mencegah penyelesaian batch bersamaan dengan create Logbook. Update notes ber-audit tidak dapat mengganti batchId.
+
+Write Logbook baru meneruskan batchId ke `inventory_transactions` dan `production_results` bila relevan; `logbookId` tetap relasi utama dan data lama ditelusuri melalui logbookId. Jangan menggandakan hasil produksi dengan menjumlahkan hasil stok masuk dan production_results. Batch tidak menampung daftar aktivitas atau agregat populasi/panen fiktif.

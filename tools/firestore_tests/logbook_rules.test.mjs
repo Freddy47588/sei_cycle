@@ -1,4 +1,4 @@
-﻿import { readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
@@ -138,4 +138,135 @@ test('denied production prevents partial inventory/logbook writes', async () => 
   assert.equal((await getDoc(doc(db, 'inventory/logbook_dedak_padi'))).exists(), false);
   assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 0);
   assert.equal((await getDocs(collection(db, 'production_results'))).size, 0);
+});
+
+// Phase 03: batches use globally unique normalized code as document ID.
+const batchData = (id = 'KOLAM-A', uid = 'field', patch = {}) => ({
+  id, code: id, name: 'Kolam A', moduleType: 'lele', locationName: 'Kolam Utara',
+  status: 'planned', startedAt: now, expectedHarvestAt: null, completedAt: null,
+  initialQuantity: 500, initialUnit: 'ekor', commodity: '', notes: '',
+  createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  isDeleted: false, ...patch,
+});
+async function seedBatch(patch = {}) {
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'batches/KOLAM-A'), batchData('KOLAM-A', 'field', { status: 'active', ...patch })));
+}
+const batchedEntry = (id = 'batched', patch = {}) => ({ ...entry(id), moduleType: 'lele', batchId: 'KOLAM-A', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...patch });
+for (const uid of ['admin', 'field', 'finance', 'reader']) {
+  test(`phase03 ${uid} batch read and create/update permissions`, async () => {
+    await seedBatch(); const db = dbFor(uid);
+    await assertSucceeds(getDoc(doc(db, 'batches/KOLAM-A')));
+    const check = ['admin', 'field'].includes(uid) ? assertSucceeds : assertFails;
+    await check(setDoc(doc(db, 'batches/NEW-CODE'), batchData('NEW-CODE', uid)));
+    await check(updateDoc(doc(db, 'batches/KOLAM-A'), { name: 'Nama baru', updatedBy: uid, updatedAt: serverTimestamp() }));
+    await assertFails(deleteDoc(doc(db, 'batches/KOLAM-A')));
+  });
+}
+test('phase03 anonymous and inactive users denied batch access', async () => {
+  await seedBatch();
+  for (const db of [env.unauthenticatedContext().firestore(), dbFor('inactive')]) {
+    await assertFails(getDoc(doc(db, 'batches/KOLAM-A')));
+    await assertFails(setDoc(doc(db, 'batches/NEW-CODE'), batchData('NEW-CODE')));
+  }
+});
+test('phase03 five official modules and optional quantities allowed', async () => {
+  const db = dbFor('field');
+  for (const [n, moduleType] of ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele'].entries()) {
+    await assertSucceeds(setDoc(doc(db, `batches/MODULE-${n}`), batchData(`MODULE-${n}`, 'field', { moduleType, initialQuantity: null, initialUnit: '' })));
+  }
+});
+test('phase03 malformed batches and forged audit identities rejected', async () => {
+  const db = dbFor('field');
+  for (const patch of [{name: ''}, {name: '   '}, {name: '\t'}, {locationName: '   '}, {locationName: ''}, {moduleType: 'fish'}, {code: 'DIFFERENT'}, {initialQuantity: -1}, {initialQuantity: 1, initialUnit: ''}, {expectedHarvestAt: Timestamp.fromMillis(1)}, {status: 'active'}, {completedAt: now}, {createdBy: 'admin'}, {updatedBy: 'admin'}, {createdAt: now}, {updatedAt: now}, {isDeleted: true}, {extra: 'field'}]) {
+    await assertFails(setDoc(doc(db, 'batches/KOLAM-A'), batchData('KOLAM-A', 'field', patch)));
+  }
+});
+test('phase03 immutable cycle identity and initial baseline protected even from admin', async () => {
+  await seedBatch(); const db = dbFor('admin');
+  for (const patch of [{moduleType: 'tanaman'}, {code: 'NEW-CODE'}, {startedAt: Timestamp.fromMillis(1)}, {initialQuantity: 9}, {initialUnit: 'kg'}, {createdBy: 'admin'}, {createdAt: now}, {isDeleted: true}, {completedAt: now}]) {
+    await assertFails(updateDoc(doc(db, 'batches/KOLAM-A'), { ...patch, updatedBy: 'admin', updatedAt: serverTimestamp() }));
+  }
+});
+test('phase03 forward lifecycle records server completion and archives without deleting history', async () => {
+  const db = dbFor('field'), ref = doc(db, 'batches/KOLAM-A');
+  await setDoc(ref, batchData());
+  const audit = {updatedBy: 'field', updatedAt: serverTimestamp()};
+  await assertFails(updateDoc(ref, {...audit, status: 'completed', completedAt: serverTimestamp()}));
+  await assertSucceeds(updateDoc(ref, {...audit, status: 'active'}));
+  await assertFails(updateDoc(ref, {...audit, status: 'completed', completedAt: now}));
+  await assertSucceeds(updateDoc(ref, {...audit, status: 'completed', completedAt: serverTimestamp()}));
+  const completion = (await getDoc(ref)).data().completedAt;
+  await assertFails(updateDoc(ref, {...audit, status: 'active', completedAt: null}));
+  await assertFails(updateDoc(ref, {...audit, name: 'Rewrite completed'}));
+  await assertSucceeds(updateDoc(ref, {...audit, status: 'archived'}));
+  assert.ok((await getDoc(ref)).data().completedAt.isEqual(completion));
+  await assertFails(deleteDoc(ref));
+});
+test('phase03 active matching batch accepted and legacy batchless create retained', async () => {
+  await seedBatch(); const db = dbFor('field');
+  await assertSucceeds(setDoc(doc(db, 'logbooks/batched'), batchedEntry()));
+  await assertSucceeds(setDoc(doc(db, 'logbooks/general'), {...entry('general'), createdAt: serverTimestamp(), updatedAt: serverTimestamp()}));
+  assert.equal((await getDoc(doc(db, 'logbooks/entry'))).data().batchId, undefined);
+});
+for (const [name, patch] of [['wrong module', {moduleType:'tanaman'}], ['planned', {status:'planned'}], ['completed', {status:'completed', completedAt:now}], ['archived', {status:'archived', completedAt:now}], ['deleted', {isDeleted:true}]]) {
+  test(`phase03 logbook rejects ${name} batch`, async () => {
+    await seedBatch(patch); await assertFails(setDoc(doc(dbFor('field'), 'logbooks/batched'), batchedEntry()));
+  });
+}
+test('phase03 missing batch, null batch and batch reassignment denied', async () => {
+  const db = dbFor('field');
+  await assertFails(setDoc(doc(db, 'logbooks/batched'), batchedEntry()));
+  await assertFails(setDoc(doc(db, 'logbooks/batched'), batchedEntry('batched', {batchId: null})));
+  await seedBatch(); await setDoc(doc(db, 'logbooks/batched'), batchedEntry());
+  await assertFails(updateDoc(doc(db, 'logbooks/batched'), {batchId: 'OTHER', updatedBy:'field', updatedAt:serverTimestamp()}));
+});
+test('phase03 batch status checked after all writes: cannot complete and append logbook atomically', async () => {
+  await seedBatch(); const db = dbFor('field'), writes = writeBatch(db);
+  writes.update(doc(db, 'batches/KOLAM-A'), {status:'completed', completedAt:serverTimestamp(), updatedBy:'field', updatedAt:serverTimestamp()});
+  writes.set(doc(db, 'logbooks/batched'), batchedEntry());
+  await assertFails(writes.commit());
+  assert.equal((await getDoc(doc(db, 'batches/KOLAM-A'))).data().status, 'active');
+});
+test('phase03 concurrent code reservation has one winner without overwrites', async () => {
+  const db = dbFor('field'), ref = doc(db, 'batches/UNIQUE');
+  const create = () => runTransaction(db, async tx => {
+    if ((await tx.get(ref)).exists()) throw new Error('duplicate code');
+    tx.set(ref, batchData('UNIQUE')); return ref.id;
+  });
+  const results = await Promise.allSettled([create(), create()]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal((await getDoc(ref)).data().code, 'UNIQUE');
+});
+test('phase03 completion racing logbook transaction aborts without stock side effects', async () => {
+  await seedBatch(); const db = dbFor('field');
+  let markRead, release;
+  const hasRead = new Promise(r => {markRead = r;});
+  const ready = new Promise(r => {release = r;});
+  const save = runTransaction(db, async tx => {
+    const batch = await tx.get(doc(db, 'batches/KOLAM-A'));
+    if (batch.data().status !== 'active') throw new Error('batch inactive');
+    markRead(); await ready;
+    tx.set(doc(db, 'logbooks/batched'), batchedEntry());
+    tx.set(doc(db, 'inventory/race'), {id:'race', currentStock:3, createdBy:'field', updatedBy:'field', isDeleted:false});
+  });
+  const rejected = assert.rejects(save, error => error.message.includes('batch inactive') || error.code === 'permission-denied');
+  await hasRead;
+  await updateDoc(doc(db, 'batches/KOLAM-A'), {status:'completed', completedAt:serverTimestamp(), updatedBy:'field', updatedAt:serverTimestamp()});
+  release(); await rejected;
+  assert.equal((await getDoc(doc(db, 'logbooks/batched'))).exists(), false);
+  assert.equal((await getDoc(doc(db, 'inventory/race'))).exists(), false);
+});
+test('phase03 batch and activity queries page with filters and tied timestamps', async () => {
+  await env.withSecurityRulesDisabled(async c => {
+    for (let n = 0; n < 23; n++) {
+      await setDoc(doc(c.firestore(), `batches/PAGE-${n}`), batchData(`PAGE-${n}`, 'field', {status:'active'}));
+      await setDoc(doc(c.firestore(), `logbooks/activity-${n}`), batchedEntry(`activity-${n}`));
+    }
+  });
+  const db = dbFor('reader');
+  for (const base of [query(collection(db, 'batches'), where('isDeleted','==',false), where('moduleType','==','lele'), where('status','==','active'), orderBy('createdAt','desc'), limit(20)), query(collection(db,'logbooks'), where('isDeleted','==',false), where('batchId','==','KOLAM-A'), orderBy('activityDate','desc'),limit(20))]) {
+    const first = await getDocs(base), second = await getDocs(query(base, startAfter(first.docs.at(-1))));
+    assert.equal(first.size,20); assert.equal(second.size,3);
+    assert.equal(new Set([...first.docs,...second.docs].map(d=>d.id)).size,23);
+  }
 });

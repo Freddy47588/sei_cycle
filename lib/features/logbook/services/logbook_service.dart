@@ -10,6 +10,8 @@ import '../models/logbook_entry.dart';
 import '../models/logbook_form_spec.dart';
 import '../models/logbook_page.dart';
 import 'inventory_mapping.dart';
+import '../../batches/services/batch_service.dart';
+import '../../profile/models/app_user.dart';
 
 class LogbookService {
   LogbookService({FirebaseFirestore? firestore, Uuid? uuid})
@@ -18,6 +20,7 @@ class LogbookService {
 
   final FirebaseFirestore _firestore;
   final Uuid _uuid;
+  BatchService get batches => BatchService(firestore: _firestore);
   late final InventoryService _inventoryService = InventoryService(
     firestore: _firestore,
     uuid: _uuid,
@@ -73,6 +76,7 @@ class LogbookService {
 
   Future<String> createDailyEntry({
     String? requestId,
+    String? batchId,
     required String moduleType,
     required String title,
     required String activityType,
@@ -91,6 +95,7 @@ class LogbookService {
 
     return createLogbookWithInventory(
       requestId: requestId,
+      batchId: batchId,
       moduleType: moduleType,
       title: title,
       activityType: activityType,
@@ -116,6 +121,7 @@ class LogbookService {
 
   Future<String> createLogbookWithInventory({
     String? requestId,
+    String? batchId,
     required String moduleType,
     required String title,
     required String activityType,
@@ -135,6 +141,9 @@ class LogbookService {
     validateLogbookDetails(moduleType, details);
     if (quantity != null && (!quantity.isFinite || quantity < 0)) {
       throw ArgumentError('Kuantitas tidak valid.');
+    }
+    if (batchId != null && (batchId.trim().isEmpty || batchId.contains('/'))) {
+      throw ArgumentError('Batch tidak valid.');
     }
     final logbookId = requestId ?? _uuid.v4();
     requireTrimmed(logbookId, 'requestId');
@@ -158,6 +167,7 @@ class LogbookService {
     };
 
     bool matchesRequest(Map<String, dynamic> data) =>
+        data['batchId'] == batchId &&
         data['createdBy'] == userId &&
         data['moduleType'] == moduleType &&
         data['title'] == title.trim() &&
@@ -180,6 +190,27 @@ class LogbookService {
           }
           return;
         }
+        if (batchId != null) {
+          final profile = await transaction.get(
+            _firestore.collection('users').doc(userId),
+          );
+          if (!profile.exists ||
+              !AppUser.fromDocument(profile).canManageLogbooks) {
+            throw StateError('Tidak memiliki izin mencatat aktivitas batch.');
+          }
+          final batch = await transaction.get(
+            _firestore.collection(FirestoreCollections.batches).doc(batchId),
+          );
+          final data = batch.data();
+          if (!batch.exists ||
+              data?['isDeleted'] != false ||
+              data?['status'] != 'active' ||
+              data?['moduleType'] != moduleType) {
+            throw StateError(
+              'Batch tidak tersedia, tidak aktif, atau berbeda modul.',
+            );
+          }
+        }
         final inventorySnapshots =
             <InventoryActionTarget, DocumentSnapshot<Map<String, dynamic>>>{};
         final notificationSnapshots =
@@ -195,6 +226,7 @@ class LogbookService {
         final now = FieldValue.serverTimestamp();
         transaction.set(_collection.doc(logbookId), {
           'id': logbookId,
+          'batchId': ?batchId,
           'title': title.trim(),
           'moduleType': moduleType,
           'activityDate': Timestamp.fromDate(DateTime.now()),
@@ -219,6 +251,7 @@ class LogbookService {
             snapshot: snapshot,
             logbookId: logbookId,
             transactionId: transactionIds[target.action]!,
+            batchId: batchId,
             userId: userId,
           );
 
@@ -232,6 +265,7 @@ class LogbookService {
               {
                 'id': id,
                 'logbookId': logbookId,
+                'batchId': ?batchId,
                 'moduleType': moduleType,
                 'productName': action.productName ?? action.itemName,
                 'quantity': action.quantity,
@@ -375,6 +409,9 @@ class LogbookService {
       'isDeleted',
       isEqualTo: false,
     );
+    if (filter.batchId != null) {
+      query = query.where('batchId', isEqualTo: filter.batchId);
+    }
     if (filter.moduleId != null) {
       query = query.where('moduleType', isEqualTo: filter.moduleId);
     }

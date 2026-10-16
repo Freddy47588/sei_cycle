@@ -1,4 +1,14 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../core/constants/farm_modules.dart';
+import '../../batches/screen/batch_detail_screen.dart';
+import '../../batches/screen/batch_list_screen.dart';
+import '../../batches/services/batch_service.dart';
+import '../../logbook/screen/logbook_detail_screen.dart';
+import '../../logbook/services/logbook_service.dart';
+import '../../schedule/screen/schedule_screen.dart';
+import '../models/dashboard_filter.dart';
+import '../widgets/module_monitoring_section.dart';
 import 'package:intl/intl.dart';
 
 import '../../../theme/app_theme.dart';
@@ -8,104 +18,312 @@ import '../models/dashboard_summary.dart';
 import '../services/dashboard_service.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({required this.profile, this.summaryLoader, super.key});
-
+  const DashboardScreen({
+    required this.profile,
+    this.summaryLoader,
+    this.periodSummaryLoader,
+    this.productivityLoader,
+    this.batchLoader,
+    this.onActivity,
+    this.onBatchDetail,
+    this.onBatches,
+    super.key,
+  });
   final Future<DashboardSummary> Function({required bool includeFinance})?
   summaryLoader;
-
+  final Future<DashboardSummary> Function(DashboardFilter)? periodSummaryLoader;
+  final ProductivityLoader? productivityLoader;
+  final MonitoringBatchLoader? batchLoader;
+  final void Function(DashboardActivity)? onActivity;
+  final void Function(String)? onBatchDetail;
+  final VoidCallback? onBatches;
   final AppUser profile;
-
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late final Future<DashboardSummary> Function({required bool includeFinance})
-  _load;
+  DashboardService? _service;
   late Future<DashboardSummary> _summaryFuture;
-
+  DashboardFilter _filter = DashboardFilter.days(7);
+  int _refreshRevision = 0;
   @override
   void initState() {
     super.initState();
-    _load = widget.summaryLoader ?? DashboardService().getDashboardSummary;
-    _summaryFuture = _load(
-      includeFinance: widget.profile.canViewFinanceDashboard,
-    );
+    _service =
+        widget.summaryLoader == null && widget.periodSummaryLoader == null
+        ? DashboardService(profile: widget.profile)
+        : null;
+    _summaryFuture = _request();
   }
 
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profile.uid != widget.profile.uid ||
+        oldWidget.profile.role != widget.profile.role ||
+        oldWidget.profile.isActive != widget.profile.isActive) {
+      _service =
+          widget.summaryLoader == null && widget.periodSummaryLoader == null
+          ? DashboardService(profile: widget.profile)
+          : null;
+      _summaryFuture = _request();
+      _refreshRevision++;
+    }
+  }
+
+  Future<DashboardSummary> _request() =>
+      widget.periodSummaryLoader?.call(_filter) ??
+      widget.summaryLoader?.call(
+        includeFinance: widget.profile.canViewFinanceDashboard,
+      ) ??
+      _service!.getDashboardSummary(
+        includeFinance: widget.profile.canViewFinanceDashboard,
+        filter: _filter,
+      );
   Future<void> _reload() async {
-    final future = _load(
-      includeFinance: widget.profile.canViewFinanceDashboard,
-    );
-    setState(() => _summaryFuture = future);
+    final future = _request();
+    setState(() {
+      _summaryFuture = future;
+      _refreshRevision++;
+    });
     try {
       await future;
     } catch (_) {
-      // FutureBuilder renders the error and retry action.
+      /* FutureBuilder presents the failure. */
+    }
+  }
+
+  void _period(DashboardFilter filter) {
+    setState(() {
+      _filter = filter;
+      _summaryFuture = _request();
+    });
+  }
+
+  Future<void> _custom() async {
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
+      initialDateRange: DateTimeRange(
+        start: _filter.start,
+        end: DateTime(_filter.end.year, _filter.end.month, _filter.end.day - 1),
+      ),
+    );
+    if (!mounted || range == null) return;
+    final filter = DashboardFilter(
+      start: range.start,
+      end: DateTime(range.end.year, range.end.month, range.end.day + 1),
+    );
+    if (filter.end.difference(filter.start).inDays > 366) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Pilih maksimal 366 hari.')));
+      return;
+    }
+    _period(filter);
+  }
+
+  void _openBatch(String id) {
+    if (!widget.profile.canViewBatches) return;
+    if (widget.onBatchDetail != null) {
+      widget.onBatchDetail!(id);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BatchDetailScreen(
+          batchId: id,
+          service: BatchService(),
+          logbookService: LogbookService(),
+          userId: widget.profile.uid,
+          canManage: widget.profile.canManageBatches,
+        ),
+      ),
+    );
+  }
+
+  void _openBatches() {
+    if (!widget.profile.canViewBatches) return;
+    if (widget.onBatches != null) {
+      widget.onBatches!();
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BatchListScreen(
+          service: BatchService(),
+          logbookService: LogbookService(),
+          userId: widget.profile.uid,
+          canManage: widget.profile.canManageBatches,
+        ),
+      ),
+    );
+  }
+
+  void _openActivity(DashboardActivity activity) {
+    if (widget.onActivity != null) {
+      widget.onActivity!(activity);
+      return;
+    }
+    if (activity.source == 'schedule') {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ScheduleScreen(profile: widget.profile),
+        ),
+      );
+    } else if (widget.profile.canViewLogbooks) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LogbookDetailScreen(
+            service: LogbookService(),
+            entryId: activity.id,
+            userId: widget.profile.uid,
+            canEdit: widget.profile.canManageLogbooks,
+          ),
+        ),
+      );
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<DashboardSummary>(
-      future: _summaryFuture,
-      builder: (context, snapshot) {
-        final summary = snapshot.data;
-        final loading = snapshot.connectionState != ConnectionState.done;
-        return RefreshIndicator(
-          onRefresh: _reload,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _WelcomeHeader(),
-                const SizedBox(height: 24),
-                SectionHeader(
-                  title: 'Ringkasan Operasional',
-                  subtitle: loading
-                      ? 'Mengambil data operasional hari ini...'
-                      : snapshot.hasError
-                      ? 'Data belum berhasil dimuat'
-                      : 'Ringkasan catatan Kebun Sei hari ini',
-                  trailing: _HeaderLiveBadge(
-                    label: loading
-                        ? 'Memuat'
-                        : snapshot.hasError
-                        ? 'Gagal'
-                        : 'Dimuat',
-                    color: loading
-                        ? AppColors.textMuted
-                        : snapshot.hasError
-                        ? AppColors.error
-                        : AppColors.primaryGreen,
+  Widget build(BuildContext context) => RefreshIndicator(
+    onRefresh: _reload,
+    child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _WelcomeHeader(), const SizedBox(height: 20),
+          Text(
+            'Periode analitik',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final days in [1, 7, 30, 90])
+                ChoiceChip(
+                  label: Text(
+                    days == 1 ? 'Hari Ini' : '$days Hari Terakhir',
+                    style: TextStyle(
+                      color:
+                          _filter.start == DashboardFilter.days(days).start &&
+                              _filter.end == DashboardFilter.days(days).end
+                          ? Colors.white
+                          : null,
+                    ),
                   ),
+                  selected:
+                      _filter.start == DashboardFilter.days(days).start &&
+                      _filter.end == DashboardFilter.days(days).end,
+                  onSelected: (_) => _period(DashboardFilter.days(days)),
                 ),
-                if (loading)
-                  const LoadingState(label: 'Memuat ringkasan...')
-                else if (snapshot.hasError)
-                  ErrorState(
-                    message:
-                        'Ringkasan belum tersedia. Periksa koneksi dan hak akses.',
-                    onRetry: _reload,
-                  )
-                else if (summary != null) ...[
-                  _StatsGrid(summary: summary),
-                  const SizedBox(height: 28),
+              ActionChip(
+                label: const Text('Rentang Custom'),
+                onPressed: _custom,
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.refresh, size: 16),
+                label: const Text('Refresh'),
+                onPressed: _reload,
+              ),
+            ],
+          ),
+          Text(_filter.label), const SizedBox(height: 20),
+          // A new key discards retained FutureBuilder data, including old finance periods.
+          FutureBuilder<DashboardSummary>(
+            key: ObjectKey(_summaryFuture),
+            future: _summaryFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Column(
+                  children: [
+                    _HeaderLiveBadge(
+                      label: 'Memuat',
+                      color: AppColors.textMuted,
+                    ),
+                    LoadingState(label: 'Memuat ringkasan...'),
+                  ],
+                );
+              }
+              if (snapshot.hasError) {
+                return Column(
+                  children: [
+                    const _HeaderLiveBadge(
+                      label: 'Gagal',
+                      color: AppColors.error,
+                    ),
+                    ErrorState(
+                      message: dashboardError(snapshot.error),
+                      onRetry: _reload,
+                    ),
+                  ],
+                );
+              }
+              final summary = snapshot.requireData;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SectionHeader(
+                    title: 'Ringkasan Operasional',
+                    subtitle: 'KPI hari ini & kondisi saat ini',
+                    trailing: const _HeaderLiveBadge(
+                      label: 'Dimuat',
+                      color: AppColors.primaryGreen,
+                    ),
+                  ),
+                  if (summary.updatedAt != null)
+                    Text(
+                      'Terakhir diperbarui: ${DateFormat('d MMM yyyy HH:mm:ss', 'id_ID').format(summary.updatedAt!)}',
+                    ),
+                  const SizedBox(height: 12),
+                  _StatsGrid(
+                    summary: summary,
+                    onBatches: widget.profile.canViewBatches
+                        ? _openBatches
+                        : null,
+                  ),
+                  if (summary.inventoryTruncated)
+                    Text(
+                      'Stok Saat Ini: cakupan ${summary.inventoryLoaded} item pertama berdasarkan ID; bukan jumlah global.',
+                    ),
+                  if (summary.lowStockPreview.isNotEmpty)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Perlu perhatian - Saat Ini',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            for (final item in summary.lowStockPreview)
+                              Text(
+                                '${item.name}: ${item.currentStock} ${item.unit} - ${item.currentStock <= 0 ? 'Habis' : 'Rendah'} (minimum ${item.minStock})',
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 24),
                   const SectionHeader(
                     title: 'Sistem Aliran Nutrisi',
-                    subtitle:
-                        'Siklus tertutup Kebun Sei - zero waste integrated farming',
+                    subtitle: 'Diagram konsep dan catatan aliran aktual',
                   ),
                   NutrientFlowCard(flows: summary.circularFlows),
-                  const SizedBox(height: 28),
-                  SectionHeader(
+                  Text(
+                    'Pratinjau maksimal 5 aliran terbaru - ${_filter.label}',
+                  ),
+                  const SizedBox(height: 24),
+                  const SectionHeader(
                     title: 'Aktivitas Hari Ini',
-                    subtitle: DateFormat(
-                      'EEEE, d MMMM yyyy',
-                      'id_ID',
-                    ).format(DateTime.now()),
+                    subtitle:
+                        'Jadwal hari ini, logbook terbaru & checklist selesai - maksimal 10 entri',
                   ),
                   if (summary.recentActivities.isEmpty)
                     const EmptyState(
@@ -115,21 +333,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       icon: Icons.event_note_outlined,
                     )
                   else
-                    _ActivityTimeline(activities: summary.recentActivities),
+                    _ActivityTimeline(
+                      activities: summary.recentActivities,
+                      onActivity: _openActivity,
+                      onBatch: _openBatch,
+                    ),
                   if (widget.profile.canViewFinanceDashboard &&
                       summary.financeVisible) ...[
-                    const SizedBox(height: 28),
-                    _RevenueCard(summary: summary),
+                    const SizedBox(height: 24),
+                    _RevenueCard(
+                      summary: summary,
+                      period: _filter.label,
+                      onRetry: _reload,
+                    ),
                   ],
                 ],
-                const SizedBox(height: 20),
-              ],
-            ),
+              );
+            },
           ),
-        );
-      },
-    );
+          const SizedBox(height: 24),
+          ModuleMonitoringSection(
+            filter: _filter,
+            refreshRevision: _refreshRevision,
+            loader: widget.productivityLoader,
+            batchLoader: widget.batchLoader,
+            offline:
+                widget.summaryLoader != null ||
+                widget.periodSummaryLoader != null,
+            onBatchDetail: _openBatch,
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    ),
+  );
+}
+
+String dashboardError(Object? error) {
+  if (error is StateError && error.message.startsWith('Lebih dari 500')) {
+    return error.message;
   }
+  if (error is FirebaseException) {
+    if (error.code == 'failed-precondition') {
+      return 'Indeks data belum siap. Hubungi admin untuk menyiapkan indeks Firestore, lalu coba lagi.';
+    }
+    if (error.code == 'permission-denied') {
+      return 'Akses data ditolak. Periksa role dan Security Rules.';
+    }
+  }
+  return 'Data gagal dimuat. Periksa koneksi atau validitas data, lalu coba lagi.';
 }
 
 class _WelcomeHeader extends StatelessWidget {
@@ -336,7 +588,8 @@ class SectionHeader extends StatelessWidget {
 }
 
 class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.summary});
+  const _StatsGrid({required this.summary, this.onBatches});
+  final VoidCallback? onBatches;
 
   final DashboardSummary summary;
 
@@ -346,30 +599,48 @@ class _StatsGrid extends StatelessWidget {
       _StatData(
         title: 'Modul Aktif',
         value: '${summary.activeModuleCount}',
-        helper: 'modul budidaya aktif',
+        helper: 'Saat Ini - modul budidaya aktif',
         icon: Icons.hub_outlined,
         color: AppColors.primaryGreen,
       ),
       _StatData(
         title: 'Aktivitas Hari Ini',
         value: '${summary.todayLogCount}',
-        helper: 'catatan logbook',
+        helper: 'Hari Ini - catatan logbook',
         icon: Icons.edit_note_outlined,
         color: AppColors.warning,
       ),
       _StatData(
         title: 'Stok Rendah',
         value: '${summary.lowStockCount}',
-        helper: 'item perlu dipantau',
+        helper:
+            'Saat Ini - ${summary.inventoryTruncated ? 'cakupan terbatas' : 'seluruh item'}',
         icon: Icons.inventory_2_outlined,
         color: AppColors.error,
       ),
       _StatData(
         title: 'Jadwal Hari Ini',
         value: '${summary.todayScheduleCount}',
-        helper: 'agenda operasional',
+        helper:
+            'Hari Ini - ${summary.pendingScheduleCount} pending / ${summary.doneScheduleCount} done / ${summary.skippedScheduleCount} skipped',
         icon: Icons.event_note_outlined,
         color: AppColors.info,
+      ),
+      _StatData(
+        title: 'Batch Aktif',
+        value: '${summary.activeBatchCount}',
+        helper: 'Saat Ini - ${summary.completedBatchCount} batch completed',
+        icon: Icons.layers_outlined,
+        color: AppColors.primaryGreen,
+        onTap: onBatches,
+      ),
+      _StatData(
+        title: 'Stok Habis',
+        value: '${summary.outOfStockCount}',
+        helper:
+            'Saat Ini - saldo <= 0${summary.inventoryTruncated ? ' - cakupan terbatas' : ''}',
+        icon: Icons.production_quantity_limits,
+        color: AppColors.accentBrown,
       ),
     ];
 
@@ -388,10 +659,14 @@ class _StatsGrid extends StatelessWidget {
             crossAxisCount: columns,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            mainAxisExtent: 170 + (scale - 1) * 100,
+            mainAxisExtent: 190 + (scale - 1) * 150,
           ),
           itemCount: stats.length,
-          itemBuilder: (context, i) => _StatCard(data: stats[i]),
+          itemBuilder: (context, i) => InkWell(
+            onTap: stats[i].onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: _StatCard(data: stats[i]),
+          ),
         );
       },
     );
@@ -405,8 +680,10 @@ class _StatData {
     required this.helper,
     required this.icon,
     required this.color,
+    this.onTap,
   });
 
+  final VoidCallback? onTap;
   final String title;
   final String value;
   final String helper;
@@ -476,10 +753,10 @@ class NutrientFlowCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nodes = _flowNodes(flows);
+    final nodes = _flowNodes(const []);
     final description = flows.isEmpty
         ? 'Ilustrasi siklus nutrisi; belum ada catatan aliran. Setiap limbah menjadi sumber daya baru: kotoran dan sisa organik diolah maggot/cacing, lalu kembali menjadi pakan, kascing, dan nutrisi tanaman.'
-        : flows.map((flow) => '${flow.materialName}: ${flow.notes}').join(' ');
+        : 'Diagram merupakan ilustrasi. Catatan aktual ditampilkan terpisah di bawah.';
 
     return Card(
       child: Padding(
@@ -488,7 +765,7 @@ class NutrientFlowCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Aliran Nutrisi – Sistem Sirkular Tertutup',
+              'Ilustrasi Siklus Nutrisi Kebun Sei',
               style: Theme.of(
                 context,
               ).textTheme.titleLarge?.copyWith(color: AppColors.primaryGreen),
@@ -519,6 +796,20 @@ class NutrientFlowCard extends StatelessWidget {
                 context,
               ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
             ),
+            if (flows.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Aliran Aktual',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              for (final flow in flows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(
+                    '${flow.materialName} - ${flow.quantity} ${flow.unit}\n${FarmModules.nameOf(flow.sourceModuleType)} -> ${FarmModules.nameOf(flow.destinationModuleType)}\n${flow.flowDate == null ? 'Tanggal tidak tersedia' : DateFormat('d MMM yyyy', 'id_ID').format(flow.flowDate!)}',
+                  ),
+                ),
+            ],
           ],
         ),
       ),
@@ -650,233 +941,141 @@ class _FlowChip extends StatelessWidget {
 }
 
 class _ActivityTimeline extends StatelessWidget {
-  const _ActivityTimeline({required this.activities});
-
+  const _ActivityTimeline({
+    required this.activities,
+    required this.onActivity,
+    required this.onBatch,
+  });
   final List<DashboardActivity> activities;
-
+  final void Function(DashboardActivity) onActivity;
+  final void Function(String) onBatch;
   @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: List.generate(activities.length, (i) {
-            final activity = activities[i];
-            final isLast = i == activities.length - 1;
-            return _TimelineRow(activity: activity, isLast: isLast);
-          }),
-        ),
-      ),
-    );
-  }
-}
-
-class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.activity, required this.isLast});
-
-  final DashboardActivity activity;
-  final bool isLast;
-
-  @override
-  Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
         children: [
-          SizedBox(
-            width: 46,
-            child: Text(
-              activity.time,
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.textMuted,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Column(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: activity.done
-                      ? activity.color
-                      : activity.color.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  activity.done ? Icons.check : activity.icon,
-                  color: activity.done ? Colors.white : activity.color,
-                  size: 14,
-                ),
-              ),
-              if (!isLast)
-                Expanded(
-                  child: Container(
-                    width: 2,
-                    color: AppColors.progressBg,
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 16),
+          for (final activity in activities)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Icon(activity.icon, color: activity.color),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      activity.title,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: activity.done
-                            ? AppColors.textMuted
-                            : AppColors.textDark,
-                        decoration: activity.done
-                            ? TextDecoration.lineThrough
-                            : TextDecoration.none,
-                        fontWeight: activity.done
-                            ? FontWeight.normal
-                            : FontWeight.w500,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        InkWell(
+                          onTap: () => onActivity(activity),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              activity.title,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${activity.time} - ${FarmModules.nameOf(activity.moduleType)}',
+                        ),
+                        Text(switch (activity.status) {
+                          'done' => 'Selesai',
+                          'pending' => 'Belum selesai',
+                          'skipped' => 'Dilewati',
+                          'recorded' => 'Tercatat',
+                          _ => 'Status tidak dikenal',
+                        }),
+                        if (activity.batchId != null)
+                          TextButton(
+                            onPressed: () => onBatch(activity.batchId!),
+                            child: Text('Batch ${activity.batchId}'),
+                          ),
+                      ],
                     ),
                   ),
-                  if (activity.done)
-                    const Icon(
-                      Icons.check_circle,
-                      color: AppColors.success,
-                      size: 16,
-                    ),
                 ],
               ),
             ),
-          ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _RevenueCard extends StatelessWidget {
-  const _RevenueCard({required this.summary});
-
+  const _RevenueCard({
+    required this.summary,
+    required this.period,
+    required this.onRetry,
+  });
   final DashboardSummary summary;
-
+  final String period;
+  final VoidCallback onRetry;
   @override
-  Widget build(BuildContext context) {
-    final total = summary.monthlyIncome;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.bar_chart_outlined,
-                  color: AppColors.primaryGreen,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Rincian Omset Bulanan - ${_money(total)}',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: AppColors.primaryGreen,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              summary.financeVisible && summary.hasFinanceData
-                  ? 'Pengeluaran ${_money(summary.monthlyExpense)} - laba/rugi ${_money(summary.monthlyProfit)}'
-                  : 'Belum ada transaksi keuangan bulan ini.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
-            ),
-            const SizedBox(height: 16),
-            ...summary.revenueItems.map((item) => _RevenueRow(item: item)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RevenueRow extends StatelessWidget {
-  const _RevenueRow({required this.item});
-
-  final RevenueBreakdownItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: item.color,
-              shape: BoxShape.circle,
-            ),
+          Text(
+            'Ringkasan Arus Kas',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(color: AppColors.primaryGreen),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 3,
-            child: Text(
-              item.label,
-              style: const TextStyle(fontSize: 13, color: AppColors.textDark),
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: item.portion.clamp(0, 1),
-                backgroundColor: item.color.withValues(alpha: 0.12),
-                valueColor: AlwaysStoppedAnimation<Color>(item.color),
-                minHeight: 8,
+          Text(period),
+          const SizedBox(height: 12),
+          if (summary.financeError != null)
+            ErrorState(
+              message: dashboardError(summary.financeError),
+              onRetry: onRetry,
+            )
+          else ...[
+            if (!summary.hasFinanceData)
+              const Text('Belum ada transaksi keuangan pada periode ini.'),
+            for (final row in [
+              ('Pemasukan', summary.monthlyIncome, AppColors.success),
+              ('Pengeluaran', summary.monthlyExpense, AppColors.error),
+              (
+                'Arus Kas Bersih',
+                summary.monthlyProfit,
+                AppColors.primaryGreen,
               ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 72,
-            child: Text(
-              _money(item.amount),
-              textAlign: TextAlign.end,
-              style: TextStyle(
-                fontSize: 12,
-                color: item.color,
-                fontWeight: FontWeight.bold,
+            ])
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.spaceBetween,
+                  children: [
+                    Text(row.$1),
+                    Text(
+                      NumberFormat.currency(
+                        locale: 'id_ID',
+                        symbol: 'Rp ',
+                        decimalDigits: 0,
+                      ).format(row.$2),
+                      style: TextStyle(
+                        color: row.$3,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+            const Text(
+              'Arus kas bersih = pemasukan - pengeluaran. Bukan laba akuntansi lengkap.',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
-          ),
+          ],
         ],
       ),
-    );
-  }
-}
-
-String _money(double value) {
-  final abs = value.abs();
-  final prefix = value < 0 ? '-Rp ' : 'Rp ';
-  if (abs >= 1000000) {
-    final amount = abs / 1000000;
-    return '$prefix${amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toStringAsFixed(1)} jt';
-  }
-  return NumberFormat.currency(
-    locale: 'id_ID',
-    symbol: 'Rp ',
-    decimalDigits: 0,
-  ).format(value);
+    ),
+  );
 }

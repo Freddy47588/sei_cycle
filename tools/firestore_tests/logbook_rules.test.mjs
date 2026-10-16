@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, where, orderBy, limit, startAfter, writeBatch, serverTimestamp, Timestamp, runTransaction, setLogLevel } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, getCountFromServer, collection, query, where, orderBy, limit, startAfter, writeBatch, serverTimestamp, Timestamp, runTransaction, setLogLevel } from 'firebase/firestore';
 setLogLevel('silent');
 async function retryTransaction(db, body) {
   for (let attempt = 0; ; attempt++) {
@@ -11,10 +11,11 @@ async function retryTransaction(db, body) {
   }
 }
 let env;
+const [emulatorHost, emulatorPort] = (process.env.FIRESTORE_EMULATOR_HOST ?? '127.0.0.1:8089').split(':');
 const now = Timestamp.fromMillis(1792108800000);
 const entry = (id = 'entry') => ({ id, title: 'Pengamatan', moduleType: 'ayam_kampung', activityType: 'input_harian_ayam', activityDate: now, quantity: 0, unit: 'butir', status: 'completed', notes: 'Asli', details: { mortalitas_hari_ini: 0 }, createdBy: 'field', updatedBy: 'field', createdAt: now, updatedAt: now, isDeleted: false });
 const dbFor = uid => env.authenticatedContext(uid).firestore();
-before(async () => { env = await initializeTestEnvironment({ projectId: 'demo-seicycle-phase02', firestore: { host: '127.0.0.1', port: 8089, rules: await readFile(new URL('../../firestore.rules', import.meta.url), 'utf8') } }); });
+before(async () => { env = await initializeTestEnvironment({ projectId: 'demo-seicycle-phase02', firestore: { host: emulatorHost, port: Number(emulatorPort), rules: await readFile(new URL('../../firestore.rules', import.meta.url), 'utf8') } }); });
 after(async () => { await env?.cleanup(); });
 beforeEach(async () => {
   await env.clearFirestore();
@@ -529,4 +530,32 @@ test('phase04 unknown role and conflicting inactive legacy flag cannot read oper
     const db=dbFor(uid);
     for(const path of ['inventory/feed','inventory_transactions/missing','schedules/task']) await assertFails(getDoc(doc(db,path)));
   }
+});
+
+// Phase 05: UI hiding is insufficient; test direct get, query, and aggregate access.
+for (const uid of ['admin', 'finance', 'field', 'reader', 'inactive', null]) {
+  test(`phase05 finance read protection: ${uid ?? 'anonymous'}`, async () => {
+    await env.withSecurityRulesDisabled(async c => {
+      await setDoc(doc(c.firestore(), 'finance_transactions/cash'), {
+        id: 'cash', type: 'income', amount: 25000, date: now, isDeleted: false
+      });
+    });
+    const db = uid ? dbFor(uid) : env.unauthenticatedContext().firestore();
+    const check = ['admin', 'finance'].includes(uid) ? assertSucceeds : assertFails;
+    await check(getDoc(doc(db, 'finance_transactions/cash')));
+    await check(getDocs(query(collection(db, 'finance_transactions'), where('isDeleted', '==', false), limit(10))));
+    await check(getCountFromServer(query(collection(db, 'finance_transactions'), where('isDeleted', '==', false))));
+  });
+}
+test('phase05 dashboard count and batch productivity query contracts', async () => {
+  const db = dbFor('field');
+  const q = query(collection(db, 'logbooks'), where('isDeleted', '==', false),
+    where('moduleType', '==', 'ayam_kampung'), where('batchId', '==', 'cycle'),
+    where('activityDate', '>=', now), orderBy('activityDate', 'desc'), limit(501));
+  await assertSucceeds(getDocs(q));
+  const count = await assertSucceeds(getCountFromServer(query(collection(db, 'logbooks'),
+    where('isDeleted', '==', false), where('activityDate', '>=', now))));
+  assert.equal(count.data().count, 1);
+  await assertSucceeds(getDocs(query(collection(db, 'production_results'), where('moduleType', '==', 'lele'),
+    where('batchId', '==', 'cycle'), where('harvestDate', '>=', now), orderBy('harvestDate', 'desc'), limit(501))));
 });

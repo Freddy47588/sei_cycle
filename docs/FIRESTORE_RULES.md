@@ -77,3 +77,10 @@ Bagian ini memperbarui perilaku inventory/inventory_transactions/schedules yang 
 - Perlindungan notes Logbook dan lifecycle batch tidak dilonggarkan. Rollback/pembatalan Logbook tetap nonaktif.
 
 Rules/index belum dideploy. Koordinasikan pembaruan client, audit data/skrip seed lama, review dan deployment manual pada project tujuan. [Phase 04](PHASE_04_INVENTORY_SCHEDULE.md) mencatat hasil emulator, cakupan dan batasnya.
+
+
+## Phase 05: pembacaan finance
+
+`finance_transactions` sekarang memakai `allow read: if canManageFinance();`. Fungsi existing tersebut mengharuskan admin/operator keuangan aktif, termasuk pemeriksaan kedua flag isActive/is_active. Operator lapangan, legacy pembaca, inaktif, pengguna tanpa profil dan anonymous tidak diberi akses baca finance. Tidak ada perubahan izin tulis transaksi pada phase ini.
+
+Dashboard dan report service tidak meminta finance tanpa `canViewFinanceDashboard`; jika query finance yang sah ditolak, error tetap ditampilkan, bukan dianggap transaksi kosong. Rules test memeriksa pembacaan dokumen, query dan agregasi untuk enam kategori identitas. Semua rules/index perlu review dan deployment manual sebelum perlindungan ini berlaku pada Firebase tujuan.

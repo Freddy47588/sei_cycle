@@ -13,20 +13,11 @@ class CircularFlowService {
       _firestore.collection(FirestoreCollections.circularFlows);
 
   Future<List<CircularFlow>> getRecentFlows({int limit = 5}) async {
-    try {
-      final snapshot = await _collection
-          .orderBy('flowDate', descending: true)
-          .limit(limit)
-          .get();
-      return snapshot.docs.map(CircularFlow.fromDocument).toList();
-    } on FirebaseException catch (error) {
-      if (error.code == 'permission-denied') return const [];
-      if (!_canFallback(error)) rethrow;
-      final snapshot = await _collection.limit(50).get();
-      final flows = snapshot.docs.map(CircularFlow.fromDocument).toList()
-        ..sort((left, right) => right.flowDate.compareTo(left.flowDate));
-      return flows.take(limit).toList();
-    }
+    final snapshot = await _collection
+        .orderBy('flowDate', descending: true)
+        .limit(limit)
+        .get();
+    return snapshot.docs.map(CircularFlow.fromDocument).toList();
   }
 
   Stream<List<CircularFlow>> streamRecentFlows({int limit = 5}) {
@@ -110,8 +101,3 @@ List<CircularFlow> defaultCircularFlows(DateTime now) {
     ),
   ];
 }
-
-bool _canFallback(FirebaseException error) =>
-    error.code == 'failed-precondition' ||
-    error.code == 'unavailable' ||
-    error.code == 'permission-denied';

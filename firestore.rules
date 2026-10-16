@@ -605,12 +605,11 @@ service cloud.firestore {
     /*
       FINANCE
       Collection branch backend: finance_transactions
-      Semua user login bisa lihat tampilan.
-      Admin dan operator keuangan bisa tambah/edit/soft delete/delete.
-      Operator lapangan hanya read-only lewat route yang tersedia.
+      Hanya admin aktif dan operator keuangan aktif boleh membaca/menulis.
+      Pembatasan berlaku juga bagi query SDK langsung.
     */
     match /finance_transactions/{transactionId} {
-      allow read: if canViewAppData();
+      allow read: if canManageFinance();
 
       allow create: if canManageFinance()
         && validFinanceTransaction(transactionId, request.resource.data)

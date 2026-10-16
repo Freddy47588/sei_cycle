@@ -388,3 +388,12 @@ Ledger baru selalu immutable dan isReversed=false. Reversal lama tetap dapat dib
 `schedules` mempertahankan id/title/moduleType/type/date/status/notes/createdBy/createdAt/updatedBy/updatedAt/isDeleted. Tambahan opsional: batchId nullable, creationPayload immutable, completedBy/completedAt, skippedBy/skippedAt/skipReason. Baru selalu pending; terminal done/skipped mencatat pengguna dan server timestamp dalam transaksi. Edit hanya pending dengan deteksi versi. Batch baru harus active/cocok modul/tidak dihapus; pembacaan dan penyelesaian jadwal lama tetap diperbolehkan setelah batch ditutup. Tidak menambah linkedLogbookId atau recurrence pada Phase 04.
 
 Kontrak/risiko selengkapnya: [Inventaris & Jadwal Phase 04](PHASE_04_INVENTORY_SCHEDULE.md). Pengelola perlu menerapkan Rules/index yang sudah ditinjau sebelum client baru dipakai; client lama yang menulis stok langsung akan ditolak.
+
+
+## Phase 05: kontrak analitik baca
+
+Tidak menambah collection summary/cache, field persistent, seed, atau operasi tulis. `production_results` merupakan sumber hasil aktual; `logbookId` wajib dapat ditelusuri ke Logbook tidak dihapus dan sesuai moduleType/batchId. Dashboard menolak total yang tidak dapat diverifikasi, duplikasi identitas produksi per logbook/produk/satuan, angka non-finite, atau cakupan hasil yang melampaui batas pembacaan. Saldo inventory dan ledger tidak dijumlahkan sebagai hasil produksi.
+
+Pengamatan Tanaman dipisahkan berdasarkan batch, komoditas, blok dan tanggal tanam; identitas legacy tidak cukup hanya ditampilkan sebagai titik catatan tersendiri. Field Lele `mortalitas_ikan` mengikuti label form **Bobot Rata-rata**, sedangkan `pakan_lele_kg` berarti **Pakan Maggot Sore**. `kondisi_air` dibaca sebagai survival rate hanya untuk nilai numerik 0–100 sesuai form terkini.
+
+Rumus, periode lokal [start,end), query bounded dan risiko legacy dijelaskan pada [Phase 05](PHASE_05_DASHBOARD_MONITORING.md).

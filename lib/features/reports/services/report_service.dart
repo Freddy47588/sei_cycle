@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../finance/models/finance_record.dart';
+import '../../profile/models/app_user.dart';
 import '../../inventory/models/inventory_item.dart';
 import '../../logbook/models/logbook_entry.dart';
 import '../models/analytics_model.dart';
@@ -11,7 +12,8 @@ class ReportService {
 
   Future<AnalyticsModel> generateReport(
     ReportFilter filter, {
-    bool includeFinance = true,
+    bool includeFinance = false,
+    AppUser? profile,
   }) async {
     final startDate = Timestamp.fromDate(filter.startDate);
     final endDate = Timestamp.fromDate(filter.endDate);
@@ -56,6 +58,7 @@ class ReportService {
 
     // Fetch Finance
     if (includeFinance &&
+        (profile?.canViewFinanceDashboard ?? false) &&
         (filter.reportType == ReportType.fullSummary ||
             filter.reportType == ReportType.finance)) {
       final financeSnapshot = await _firestore

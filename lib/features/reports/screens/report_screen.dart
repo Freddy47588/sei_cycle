@@ -47,7 +47,8 @@ class _ReportScreenState extends State<ReportScreen> {
     setState(() {
       _dataFuture = _service.generateReport(
         _filter,
-        includeFinance: widget.profile.canViewFinance,
+        includeFinance: widget.profile.canViewFinanceDashboard,
+        profile: widget.profile,
       );
     });
   }

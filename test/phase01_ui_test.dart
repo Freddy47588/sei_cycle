@@ -592,6 +592,7 @@ class _EmptyCollection implements CollectionReference<Map<String, dynamic>> {
         _EmptySnapshot(),
       );
     }
+    if (invocation.memberName == #count) return _EmptyAggregate();
     if ([#where, #orderBy, #limit].contains(invocation.memberName)) return this;
     return super.noSuchMethod(invocation);
   }
@@ -630,4 +631,20 @@ class _RecordingLogbookService extends LogbookService {
     savedDetails = details;
     return requestId ?? 'saved-id';
   }
+}
+
+class _EmptyAggregate implements AggregateQuery {
+  @override
+  Future<AggregateQuerySnapshot> get({
+    AggregateSource source = AggregateSource.server,
+  }) async => _EmptyAggregateSnapshot();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _EmptyAggregateSnapshot implements AggregateQuerySnapshot {
+  @override
+  int get count => 0;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

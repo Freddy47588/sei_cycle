@@ -1,406 +1,336 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/constants/firestore_collections.dart';
 import '../../../theme/app_theme.dart';
-import '../../circular_flow/services/circular_flow_service.dart';
+import '../../profile/models/app_user.dart';
+import '../models/dashboard_filter.dart';
+import '../models/dashboard_numbers.dart';
+export '../models/dashboard_numbers.dart';
 import '../models/dashboard_summary.dart';
 
 class DashboardService {
-  DashboardService({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
-
+  DashboardService({
+    FirebaseFirestore? firestore,
+    this.profile,
+    DateTime Function()? clock,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _clock = clock ?? DateTime.now;
   final FirebaseFirestore _firestore;
+  final AppUser? profile;
+  final DateTime Function() _clock;
 
   Future<DashboardSummary> load({required bool includeFinance}) =>
       getDashboardSummary(includeFinance: includeFinance);
 
   Future<DashboardSummary> getDashboardSummary({
     required bool includeFinance,
+    DashboardFilter? filter,
   }) async {
-    final now = DateTime.now();
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    final endOfDay = startOfDay.add(const Duration(days: 1));
-    final startOfMonth = DateTime(now.year, now.month);
-    final endOfMonth = DateTime(now.year, now.month + 1);
-
+    final now = _clock();
+    final today = DashboardFilter.days(1, now: now);
+    final period = filter ?? DashboardFilter.days(30, now: now);
+    final financeAllowed =
+        includeFinance && (profile?.canViewFinanceDashboard ?? false);
+    // A finance failure remains an explicit section error; operational data survives.
+    Object? financeError;
+    final financeFuture = financeAllowed
+        ? getMonthlyFinanceSummary(
+            startOfMonth: period.start,
+            endOfMonth: period.end,
+          ).then<FinanceDashboardSummary?>(
+            (value) => value,
+            onError: (Object error) {
+              financeError = error;
+              return null;
+            },
+          )
+        : Future<FinanceDashboardSummary?>.value(null);
     final results = await Future.wait<Object?>([
-      getActiveFarmModules(),
-      getTodayLogbooks(startOfDay: startOfDay, endOfDay: endOfDay),
-      getTodaySchedules(startOfDay: startOfDay, endOfDay: endOfDay),
-      getLowStockInventory(),
-      getRecentCircularFlows(),
-      includeFinance
-          ? getMonthlyFinanceSummary(
-              startOfMonth: startOfMonth,
-              endOfMonth: endOfMonth,
-            )
-          : Future.value(null),
-    ]);
-
-    final activeModules =
-        results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
-    final todayLogbooks =
-        results[1] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
-    final todaySchedules =
-        results[2] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
-    final lowStockDocs =
-        results[3] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
-    final circularFlows = results[4] as List<DashboardCircularFlow>;
-    final financeSummary = results[5] as FinanceDashboardSummary?;
-
-    final activities = _activitiesFromFirestore(todayLogbooks, todaySchedules);
-    final revenueItems = _revenueItemsFromFinance(financeSummary);
-
-    return DashboardSummary(
-      activeModuleCount: activeModules.length,
-      todayLogCount: todayLogbooks.length,
-      todayScheduleCount: todaySchedules.length,
-      lowStockCount: lowStockDocs.length,
-      monthlyIncome: financeSummary?.income ?? 0,
-      monthlyExpense: financeSummary?.expense ?? 0,
-      monthlyProfit:
-          (financeSummary?.income ?? 0) - (financeSummary?.expense ?? 0),
-      recentActivities: activities,
-      revenueItems: revenueItems,
-      circularFlows: circularFlows,
-      lowStockPreview: [
-        for (final document in lowStockDocs.take(5))
-          _lowStockItemFromDocument(document),
-      ],
-      financeVisible: includeFinance && financeSummary != null,
-    );
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
-  getActiveFarmModules() async {
-    try {
-      final snapshot = await _firestore
-          .collection(FirestoreCollections.farmModules)
-          .where('isActive', isEqualTo: true)
-          .orderBy('order')
-          .get();
-      return snapshot.docs;
-    } on FirebaseException catch (error) {
-      if (!_canFallback(error)) rethrow;
-      final snapshot = await _firestore
-          .collection(FirestoreCollections.farmModules)
-          .where('isActive', isEqualTo: true)
-          .get();
-      final docs = snapshot.docs;
-      docs.sort((a, b) {
-        final left = a.data()['order'];
-        final right = b.data()['order'];
-        return (left is num ? left : 0).compareTo(right is num ? right : 0);
-      });
-      return docs;
-    }
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getTodayLogbooks({
-    DateTime? startOfDay,
-    DateTime? endOfDay,
-  }) {
-    final now = DateTime.now();
-    final start = startOfDay ?? DateTime(now.year, now.month, now.day);
-    final end = endOfDay ?? start.add(const Duration(days: 1));
-    return _dateRangeDocs(
-      collection: FirestoreCollections.logbooks,
-      field: 'activityDate',
-      start: start,
-      end: end,
-      descending: true,
-    );
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getTodaySchedules({
-    DateTime? startOfDay,
-    DateTime? endOfDay,
-  }) {
-    final now = DateTime.now();
-    final start = startOfDay ?? DateTime(now.year, now.month, now.day);
-    final end = endOfDay ?? start.add(const Duration(days: 1));
-    return _dateRangeDocs(
-      collection: FirestoreCollections.schedules,
-      field: 'date',
-      start: start,
-      end: end,
-    );
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
-  getLowStockInventory() async {
-    try {
-      final snapshot = await _firestore
+      _count(
+        _firestore
+            .collection(FirestoreCollections.farmModules)
+            .where('isActive', isEqualTo: true),
+      ),
+      _count(_range(FirestoreCollections.logbooks, 'activityDate', today)),
+      _count(_range(FirestoreCollections.schedules, 'date', today)),
+      _count(
+        _range(
+          FirestoreCollections.schedules,
+          'date',
+          today,
+        ).where('status', isEqualTo: 'pending'),
+      ),
+      _count(
+        _range(
+          FirestoreCollections.schedules,
+          'date',
+          today,
+        ).where('status', isEqualTo: 'done'),
+      ),
+      _count(
+        _range(
+          FirestoreCollections.schedules,
+          'date',
+          today,
+        ).where('status', isEqualTo: 'skipped'),
+      ),
+      _count(_batches.where('status', isEqualTo: 'active')),
+      _count(_batches.where('status', isEqualTo: 'completed')),
+      _firestore
           .collection(FirestoreCollections.inventory)
           .where('isDeleted', isEqualTo: false)
-          .where('isLowStock', isEqualTo: true)
-          .orderBy('name')
-          .get();
-      return snapshot.docs;
-    } on FirebaseException catch (error) {
-      if (!_canFallback(error)) rethrow;
-      final docs = await _activeDocs(FirestoreCollections.inventory);
-      final lowStock = docs
-          .where((document) => document.data()['isLowStock'] == true)
-          .toList();
-      lowStock.sort(_compareString('name'));
-      return lowStock;
-    }
+          .orderBy(FieldPath.documentId)
+          .limit(201)
+          .get(),
+      _firestore
+          .collection(FirestoreCollections.logbooks)
+          .where('isDeleted', isEqualTo: false)
+          .orderBy('activityDate', descending: true)
+          .limit(10)
+          .get(),
+      _range(
+        FirestoreCollections.schedules,
+        'date',
+        today,
+      ).orderBy('date', descending: true).limit(10).get(),
+      // Completion time, rather than the planned date, determines recent checklist events.
+      _firestore
+          .collection(FirestoreCollections.schedules)
+          .where('isDeleted', isEqualTo: false)
+          .where('status', isEqualTo: 'done')
+          .orderBy('completedAt', descending: true)
+          .limit(10)
+          .get(),
+      getRecentCircularFlows(filter: period),
+      financeFuture,
+    ]);
+    final stockDocs = (results[8] as QuerySnapshot<Map<String, dynamic>>).docs;
+    final inventory = stockDocs.take(200).map((doc) {
+      final d = doc.data();
+      final stock = finiteNumber(d['currentStock']);
+      final minimum = finiteNumber(d['minStock']);
+      if (stock == null || minimum == null) {
+        throw const FormatException(
+          'Saldo stok tidak valid; ringkasan tidak dihitung sebagai nol.',
+        );
+      }
+      return LowStockDashboardItem(
+        id: doc.id,
+        name: '${d['name'] ?? 'Item tanpa nama'}',
+        currentStock: stock,
+        minStock: minimum,
+        unit: '${d['unit'] ?? ''}',
+      );
+    }).toList();
+    final low = inventory
+        .where(
+          (item) => item.currentStock > 0 && item.currentStock <= item.minStock,
+        )
+        .toList();
+    final empty = inventory.where((item) => item.currentStock <= 0).toList();
+    final finance = results[13] as FinanceDashboardSummary?;
+    return DashboardSummary(
+      activeModuleCount: results[0] as int,
+      todayLogCount: results[1] as int,
+      todayScheduleCount: results[2] as int,
+      pendingScheduleCount: results[3] as int,
+      doneScheduleCount: results[4] as int,
+      skippedScheduleCount: results[5] as int,
+      activeBatchCount: results[6] as int,
+      completedBatchCount: results[7] as int,
+      lowStockCount: low.length,
+      outOfStockCount: empty.length,
+      inventoryLoaded: inventory.length,
+      inventoryTruncated: stockDocs.length > 200,
+      lowStockPreview: [...empty, ...low].take(5).toList(),
+      recentActivities: mergeDashboardActivities(
+        (results[9] as QuerySnapshot<Map<String, dynamic>>).docs,
+        [
+          ...(results[10] as QuerySnapshot<Map<String, dynamic>>).docs,
+          ...(results[11] as QuerySnapshot<Map<String, dynamic>>).docs,
+        ],
+      ),
+      circularFlows: results[12] as List<DashboardCircularFlow>,
+      monthlyIncome: finance?.income ?? 0,
+      monthlyExpense: finance?.expense ?? 0,
+      monthlyProfit: (finance?.income ?? 0) - (finance?.expense ?? 0),
+      revenueItems: const [],
+      financeVisible: financeAllowed,
+      financeError: financeError,
+      updatedAt: _clock(),
+    );
+  }
+
+  Query<Map<String, dynamic>> get _batches => _firestore
+      .collection(FirestoreCollections.batches)
+      .where('isDeleted', isEqualTo: false);
+
+  Query<Map<String, dynamic>> _range(
+    String collection,
+    String date,
+    DashboardFilter filter,
+  ) => _firestore
+      .collection(collection)
+      .where('isDeleted', isEqualTo: false)
+      .where(date, isGreaterThanOrEqualTo: Timestamp.fromDate(filter.start))
+      .where(date, isLessThan: Timestamp.fromDate(filter.end));
+
+  Future<int> _count(Query<Map<String, dynamic>> query) async {
+    final count = (await query.count().get()).count;
+    if (count == null) throw StateError('Agregasi jumlah tidak tersedia.');
+    return count;
   }
 
   Future<List<DashboardCircularFlow>> getRecentCircularFlows({
     int limit = 5,
+    DashboardFilter? filter,
   }) async {
-    final flows = await CircularFlowService(
-      firestore: _firestore,
-    ).getRecentFlows(limit: limit);
+    Query<Map<String, dynamic>> query = _firestore.collection(
+      FirestoreCollections.circularFlows,
+    );
+    if (filter != null) {
+      query = query
+          .where(
+            'flowDate',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(filter.start),
+          )
+          .where('flowDate', isLessThan: Timestamp.fromDate(filter.end));
+    }
+    final snapshot = await query
+        .orderBy('flowDate', descending: true)
+        .limit(limit)
+        .get();
+    // Deterministic IDs from the old illustrative seed are never operational evidence.
+    const illustrativeIds = {
+      'tanaman_to_maggot_bsf',
+      'maggot_bsf_to_ayam_kampung',
+      'ayam_kampung_to_cacing_tanah',
+      'cacing_tanah_to_tanaman',
+      'lele_to_tanaman',
+    };
     return [
-      for (final flow in flows)
-        DashboardCircularFlow(
-          sourceModuleType: flow.sourceModuleType,
-          destinationModuleType: flow.destinationModuleType,
-          materialName: flow.materialName,
-          quantity: flow.quantity,
-          unit: flow.unit,
-          notes: flow.notes,
-        ),
+      for (final doc in snapshot.docs)
+        if (!illustrativeIds.contains(doc.id) &&
+            doc.data()['isDeleted'] != true)
+          if (finiteNumber(doc.data()['quantity']) case final double quantity
+              when quantity > 0)
+            if (doc.data()['flowDate'] is Timestamp &&
+                '${doc.data()['unit'] ?? ''}'.isNotEmpty)
+              DashboardCircularFlow(
+                sourceModuleType: '${doc.data()['sourceModuleType'] ?? ''}',
+                destinationModuleType:
+                    '${doc.data()['destinationModuleType'] ?? ''}',
+                materialName: '${doc.data()['materialName'] ?? ''}',
+                quantity: quantity,
+                unit: '${doc.data()['unit']}',
+                notes: '${doc.data()['notes'] ?? ''}',
+                flowDate: (doc.data()['flowDate'] as Timestamp).toDate(),
+              ),
     ];
   }
 
-  Future<FinanceDashboardSummary?> getMonthlyFinanceSummary({
+  Future<FinanceDashboardSummary> getMonthlyFinanceSummary({
     DateTime? startOfMonth,
     DateTime? endOfMonth,
   }) async {
-    final now = DateTime.now();
-    final start = startOfMonth ?? DateTime(now.year, now.month);
-    final end = endOfMonth ?? DateTime(now.year, now.month + 1);
-    try {
-      final snapshot = await _firestore
-          .collection(FirestoreCollections.financeTransactions)
-          .where('isDeleted', isEqualTo: false)
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThan: Timestamp.fromDate(end))
-          .orderBy('date', descending: true)
-          .get();
-      return _financeFromDocs(snapshot.docs);
-    } on FirebaseException catch (error) {
-      if (error.code == 'permission-denied') return null;
-      if (!_canFallback(error)) rethrow;
-      final docs = await _activeDocs(FirestoreCollections.financeTransactions);
-      return _financeFromDocs(
-        docs.where((document) {
-          final value = document.data()['date'];
-          if (value is! Timestamp) return false;
-          final date = value.toDate();
-          return !date.isBefore(start) && date.isBefore(end);
-        }).toList(),
+    if (!(profile?.canViewFinanceDashboard ?? false)) {
+      throw StateError('Tidak memiliki akses ringkasan keuangan.');
+    }
+    final now = _clock();
+    final period = DashboardFilter(
+      start: startOfMonth ?? DateTime(now.year, now.month),
+      end: endOfMonth ?? DateTime(now.year, now.month + 1),
+    );
+    final snapshot = await _range(
+      FirestoreCollections.financeTransactions,
+      'date',
+      period,
+    ).orderBy('date', descending: true).limit(501).get();
+    if (snapshot.docs.length > 500) {
+      throw StateError(
+        'Lebih dari 500 transaksi. Persempit periode untuk ringkasan akurat.',
       );
     }
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _dateRangeDocs({
-    required String collection,
-    required String field,
-    required DateTime start,
-    required DateTime end,
-    bool descending = false,
-  }) async {
-    try {
-      final snapshot = await _firestore
-          .collection(collection)
-          .where('isDeleted', isEqualTo: false)
-          .where(field, isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where(field, isLessThan: Timestamp.fromDate(end))
-          .orderBy(field, descending: descending)
-          .get();
-      return snapshot.docs;
-    } on FirebaseException catch (error) {
-      if (!_canFallback(error)) rethrow;
-      final docs = await _activeDocs(collection);
-      final filtered = docs.where((document) {
-        final value = document.data()[field];
-        if (value is! Timestamp) return false;
-        final date = value.toDate();
-        return !date.isBefore(start) && date.isBefore(end);
-      }).toList();
-      filtered.sort(_compareTimestamp(field, descending: descending));
-      return filtered;
+    var income = 0.0, expense = 0.0;
+    for (final doc in snapshot.docs) {
+      final d = doc.data();
+      final amount = finiteNumber(d['amount']);
+      if (amount == null ||
+          amount < 0 ||
+          !['income', 'expense'].contains(d['type'])) {
+        throw const FormatException('Transaksi keuangan tidak valid.');
+      }
+      if (d['type'] == 'income') income += amount;
+      if (d['type'] == 'expense') expense += amount;
     }
-  }
-
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _activeDocs(
-    String collection,
-  ) async {
-    final snapshot = await _firestore.collection(collection).get();
-    return snapshot.docs
-        .where((document) => document.data()['isDeleted'] != true)
-        .toList();
-  }
-
-  List<DashboardActivity> _activitiesFromFirestore(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> logbooks,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> schedules,
-  ) {
-    final activities = <DashboardActivity>[];
-    for (final document in logbooks.take(7)) {
-      final data = document.data();
-      final date = data['activityDate'];
-      activities.add(
-        DashboardActivity(
-          time: _timeLabel(date),
-          title:
-              _string(data['title']) ??
-              _string(data['activityType']) ??
-              'Catatan logbook harian',
-          icon: _moduleIcon(_string(data['moduleType'])),
-          color: _moduleColor(_string(data['moduleType'])),
-          done: true,
-        ),
-      );
-    }
-    if (activities.isNotEmpty) return activities;
-    for (final document in schedules.take(7)) {
-      final data = document.data();
-      activities.add(
-        DashboardActivity(
-          time: _timeLabel(data['date']),
-          title: _string(data['title']) ?? 'Jadwal operasional hari ini',
-          icon: Icons.event_note_outlined,
-          color: AppColors.info,
-          done: data['status'] == 'completed',
-        ),
-      );
-    }
-    return activities;
-  }
-
-  List<RevenueBreakdownItem> _revenueItemsFromFinance(
-    FinanceDashboardSummary? summary,
-  ) {
-    if (summary == null || (summary.income == 0 && summary.expense == 0)) {
-      return const [];
-    }
-    final total = summary.income + summary.expense;
-    return [
-      RevenueBreakdownItem(
-        label: 'Pemasukan',
-        amount: summary.income,
-        portion: total == 0 ? 0 : summary.income / total,
-        color: AppColors.success,
-      ),
-      RevenueBreakdownItem(
-        label: 'Pengeluaran',
-        amount: summary.expense,
-        portion: total == 0 ? 0 : summary.expense / total,
-        color: AppColors.error,
-      ),
-      RevenueBreakdownItem(
-        label: 'Laba Bersih',
-        amount: summary.income - summary.expense,
-        portion: summary.income == 0
-            ? 0
-            : ((summary.income - summary.expense).abs() / summary.income).clamp(
-                0,
-                1,
-              ),
-        color: summary.income >= summary.expense
-            ? AppColors.primaryGreen
-            : AppColors.warning,
-      ),
-    ];
-  }
-
-  FinanceDashboardSummary _financeFromDocs(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
-    var income = 0.0;
-    var expense = 0.0;
-    for (final document in docs) {
-      final data = document.data();
-      final amount = (data['amount'] as num?)?.toDouble() ?? 0;
-      if (data['type'] == 'income') income += amount;
-      if (data['type'] == 'expense') expense += amount;
+    if (!income.isFinite || !expense.isFinite || !(income - expense).isFinite) {
+      throw const FormatException('Nilai keuangan melebihi batas.');
     }
     return FinanceDashboardSummary(income: income, expense: expense);
-  }
-
-  LowStockDashboardItem _lowStockItemFromDocument(
-    QueryDocumentSnapshot<Map<String, dynamic>> document,
-  ) {
-    final data = document.data();
-    return LowStockDashboardItem(
-      id: _string(data['id']) ?? document.id,
-      name: _string(data['name']) ?? 'Item tanpa nama',
-      currentStock: (data['currentStock'] as num?)?.toDouble() ?? 0,
-      minStock: (data['minStock'] as num?)?.toDouble() ?? 0,
-      unit: _string(data['unit']) ?? '',
-    );
   }
 }
 
 class FinanceDashboardSummary {
   const FinanceDashboardSummary({required this.income, required this.expense});
-
-  final double income;
-  final double expense;
+  final double income, expense;
 }
 
-bool _canFallback(FirebaseException error) =>
-    error.code == 'failed-precondition' ||
-    error.code == 'unavailable' ||
-    error.code == 'permission-denied';
-
-String? _string(Object? value) =>
-    value is String && value.trim().isNotEmpty ? value.trim() : null;
-
-String _timeLabel(Object? value) {
-  if (value is! Timestamp) return '--:--';
-  final date = value.toDate();
-  return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+List<DashboardActivity> mergeDashboardActivities(
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> logs,
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> schedules,
+) {
+  final result = <DashboardActivity>[];
+  final seen = <String>{};
+  for (final source in [(logs, 'logbook'), (schedules, 'schedule')]) {
+    for (final doc in source.$1) {
+      if (!seen.add('${source.$2}/${doc.id}')) continue;
+      final d = doc.data();
+      final status = source.$2 == 'logbook'
+          ? 'recorded'
+          : '${d['status'] ?? 'unknown'}';
+      final rawDate = source.$2 == 'logbook'
+          ? d['activityDate']
+          : status == 'done'
+          ? d['completedAt'] ?? d['date']
+          : status == 'skipped'
+          ? d['skippedAt'] ?? d['date']
+          : d['date'];
+      if (rawDate is! Timestamp) continue;
+      final date = rawDate.toDate().toLocal();
+      final module = '${d['moduleType'] ?? ''}';
+      result.add(
+        DashboardActivity(
+          id: doc.id,
+          source: source.$2,
+          moduleType: module,
+          status: status,
+          batchId: d['batchId'] as String?,
+          occurredAt: date,
+          time: DateFormat('d/M HH:mm').format(date),
+          title:
+              '${d['title'] ?? d['activityType'] ?? 'Aktivitas operasional'}',
+          icon: moduleIcon(module),
+          color: moduleColor(module),
+          done: status == 'done',
+        ),
+      );
+    }
+  }
+  result.sort((a, b) => b.occurredAt!.compareTo(a.occurredAt!));
+  return result.take(10).toList();
 }
 
-int Function(
-  QueryDocumentSnapshot<Map<String, dynamic>>,
-  QueryDocumentSnapshot<Map<String, dynamic>>,
-)
-_compareString(String field) {
-  return (left, right) {
-    final leftValue = _string(left.data()[field]) ?? '';
-    final rightValue = _string(right.data()[field]) ?? '';
-    return leftValue.compareTo(rightValue);
-  };
-}
-
-int Function(
-  QueryDocumentSnapshot<Map<String, dynamic>>,
-  QueryDocumentSnapshot<Map<String, dynamic>>,
-)
-_compareTimestamp(String field, {bool descending = false}) {
-  return (left, right) {
-    final leftValue = left.data()[field];
-    final rightValue = right.data()[field];
-    final leftDate = leftValue is Timestamp
-        ? leftValue.toDate()
-        : DateTime.fromMillisecondsSinceEpoch(0);
-    final rightDate = rightValue is Timestamp
-        ? rightValue.toDate()
-        : DateTime.fromMillisecondsSinceEpoch(0);
-    final comparison = leftDate.compareTo(rightDate);
-    return descending ? -comparison : comparison;
-  };
-}
-
-Color _moduleColor(String? moduleType) => switch (moduleType) {
+Color moduleColor(String module) => switch (module) {
   'ayam_kampung' => AppColors.warning,
-  'maggot_bsf' => AppColors.accentLightGreen,
+  'maggot_bsf' => AppColors.accentBrown,
   'cacing_tanah' => AppColors.primaryGreen,
   'lele' => AppColors.info,
   'tanaman' => AppColors.success,
   _ => AppColors.primaryGreen,
 };
-
-IconData _moduleIcon(String? moduleType) => switch (moduleType) {
+IconData moduleIcon(String module) => switch (module) {
   'ayam_kampung' => Icons.egg_alt_outlined,
   'maggot_bsf' => Icons.bug_report_outlined,
   'cacing_tanah' => Icons.grass_outlined,

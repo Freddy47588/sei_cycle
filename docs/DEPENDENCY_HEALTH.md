@@ -1,0 +1,70 @@
+# Dependency Health & Deprecation Policy
+
+Berlaku untuk Phase 05 dan semua phase berikutnya. Audit dilakukan 16 Oktober 2026, dengan Flutter **3.44.2 stable** dan Dart **3.12.2**. Baseline analyzer bersih dan 181 Flutter test lulus sebelum perubahan kode.
+
+## Kebijakan wajib
+
+1. Sebelum coding: `flutter --version`, `flutter pub get`, `flutter pub outdated`, `flutter analyze`; baca pubspec dan lockfile.
+2. Periksa metadata discontinued/retracted, rilis stabil, SDK constraints, sumber maintenance resmi, dependensi transitif, serta kompatibilitas Android/Firebase. Versi terbaru yang tersedia bukan bukti deprecation.
+3. Prioritaskan package resmi, aktif, stabil dan kompatibel; gunakan dependency existing yang didukung. Jangan menambahkan package discontinued/unmaintained atau API deprecated. Jangan upgrade major tanpa alasan dan regresi yang memadai.
+4. Jangan menghapus atau mengganti dependency existing tanpa pemeriksaan dampak. Evaluasi pengganti yang terawat bila dependency existing terbukti deprecated; migrasi hanya bila aman dan regresinya dapat diuji.
+5. Perbaiki `deprecated_member_use` pada kode baru/diubah melalui API pengganti resmi. Jangan menambahkan ignore lint. Deprecation existing yang tidak terkait didokumentasikan dan diperbaiki hanya bila aman.
+6. Pertahankan konfigurasi Android/Firebase yang bekerja. Evaluasi migrasi Kotlin terpisah terhadap prasyarat Flutter/AGP dan plugin; jangan upgrade major sekadar membuang warning.
+7. Sesudah implementasi: `flutter pub get`, `flutter pub outdated`, `flutter analyze`, `flutter test --reporter expanded`, dan `flutter build apk --debug` bila SDK Android tersedia. Laporkan perubahan versi, alasan, sumber resmi, warning tersisa, hasil aktual dan batas verifikasi.
+
+## Hasil audit Phase 05
+
+**Tidak ada dependency ditambah, dihapus, di-upgrade, atau di-override.** `pubspec.yaml` dan `pubspec.lock` dipertahankan. Grafik memakai `fl_chart 1.2.0` existing. Resolver berhasil pada SDK yang tersedia; lockfile mensyaratkan Dart >=3.12.0 dan Flutter >=3.44.0 walaupun pubspec root mencantumkan Dart ^3.10.3. Gunakan toolchain yang memenuhi seluruh constraints, bukan hanya root pubspec.
+
+`flutter pub outdated` menemukan **40 dependency upgradable yang masih terkunci**, **13 constraints di bawah versi resolvable**, dan **57 package dengan versi lebih baru** pada output pub get. Hal ini tidak sama dengan deprecated. Tidak dilakukan upgrade massal karena scope Phase 05 tidak memerlukan dependency baru dan konfigurasi Android sudah bekerja.
+
+Metadata **104 package hosted** dari lockfile diperiksa melalui API resmi pub.dev: tidak ditemukan flag discontinued atau retracted pada versi terkunci. Sepuluh repository upstream yang menaungi 17 dependency direct/dev diperiksa melalui GitHub API resmi: tidak archived/disabled saat audit. Daftar versi, constraints, waktu rilis dan bukti mentah ada di [snapshot](DEPENDENCY_HEALTH_SNAPSHOT.json).
+
+| Dependency | Versi terkunci | Stabil terbaru saat audit | Keputusan/status |
+| --- | --- | --- | --- |
+| [cloud_firestore](https://pub.dev/packages/cloud_firestore) | 6.6.0 | 7.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [cupertino_icons](https://pub.dev/packages/cupertino_icons) | 1.0.8 | 2.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [excel](https://pub.dev/packages/excel) | 4.0.6 | 4.0.6 | Perlu tinjauan maintenance terpisah: rilis terakhir 2024; repo terakhir didorong Juli 2025. |
+| [firebase_auth](https://pub.dev/packages/firebase_auth) | 6.5.3 | 7.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [firebase_core](https://pub.dev/packages/firebase_core) | 4.11.0 | 5.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [firebase_messaging](https://pub.dev/packages/firebase_messaging) | 16.4.0 | 17.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [fl_chart](https://pub.dev/packages/fl_chart) | 1.2.0 | 1.2.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [flutter_lints](https://pub.dev/packages/flutter_lints) | 6.0.0 | 6.0.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [flutter_local_notifications](https://pub.dev/packages/flutter_local_notifications) | 22.0.1 | 22.3.2 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [google_sign_in](https://pub.dev/packages/google_sign_in) | 7.2.0 | 7.2.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [intl](https://pub.dev/packages/intl) | 0.20.2 | 0.20.3 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [path_provider](https://pub.dev/packages/path_provider) | 2.1.6 | 2.1.6 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [pdf](https://pub.dev/packages/pdf) | 3.12.0 | 3.13.1 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [printing](https://pub.dev/packages/printing) | 5.14.3 | 5.15.1 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [share_plus](https://pub.dev/packages/share_plus) | 13.2.0 | 13.3.1 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [timezone](https://pub.dev/packages/timezone) | 0.11.0 | 0.11.2 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+| [uuid](https://pub.dev/packages/uuid) | 4.5.3 | 4.6.0 | Tidak discontinued/retracted; repo upstream aktif dan tidak archived saat audit. |
+
+### Risiko existing dan lingkup yang belum terverifikasi
+
+- `excel 4.0.6`: belum ditandai discontinued, tetapi rilis terakhir 20 Agustus 2024 dan push repository terakhir 15 Juli 2025. Ini **risiko maintenance**, bukan bukti formal package deprecated. Pertahankan untuk kompatibilitas ekspor existing; jangan menambah pemakaian baru di Phase 05. Penggantian membutuhkan audit pemetaan tipe sel, formatting, file hasil, dan pengujian round-trip ekspor sebelum migrasi.
+- Rantai `excel -> archive 3.6.1` dan `pdf/printing -> image 4.3.0 -> archive` masih tertahan constraints existing; `archive` terbaru memiliki major berbeda. Jangan memaksa versi melalui dependency_overrides. Parser arsip/gambar dan ekspor perlu peninjauan tersendiri sebelum upgrade.
+- Metadata pub.dev diperiksa untuk seluruh 104 package hosted; status aktivitas semua repository transitif, seluruh API internal package, native Maven/CocoaPods, CVE, perilaku iOS/web/desktop, dan fitur ekspor PDF/Excel belum diaudit menyeluruh. Hasil ini **bukan klaim seluruh dependency bebas deprecation atau kerentanan**.
+- Analyzer baseline tidak menemukan penggunaan API deprecated pada kode aplikasi. Hasil akhir dicatat di [Phase 05](PHASE_05_DASHBOARD_MONITORING.md). Tidak ada suppression lint deprecation yang ditambahkan.
+
+## Android dan Firebase
+
+Konfigurasi existing dipertahankan: **Gradle 8.14, AGP 8.11.1, Kotlin 2.2.20**, target Java 17, desugar_jdk_libs 2.1.4. [Tabel resmi Kotlin](https://kotlinlang.org/docs/gradle-configure-project.html) mendukung KGP 2.2.20–2.2.21 dengan Gradle 7.6.3–8.14 dan AGP 7.3.1–8.11.1. [AGP 8.11](https://developer.android.com/build/releases/agp-8-11-0-release-notes) memerlukan setidaknya Gradle 8.13/JDK 17. Kombinasi proyek berada pada batas dukungan tersebut.
+
+Firebase Core **4.11.0**, Auth **6.5.3**, Firestore **6.6.0**, dan Messaging **16.4.0** merupakan keluarga FlutterFire existing. Android Core lokal menentukan Firebase BoM **34.15.0** dan plugin Auth/Firestore mengikuti Core. SDK constraints terselesaikan dan APK debug berhasil dibangun; runtime autentikasi/Firestore produksi tetap memerlukan smoke test perangkat. Tidak mengubah Firebase options, google-services.json, BoM override atau konfigurasi Android.
+
+Warning Flutter **“applies the Kotlin Gradle Plugin”** masih muncul. [Panduan migrasi resmi Flutter](https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin) menjelaskan perubahan built-in Kotlin dan kesiapan seluruh plugin. Migrasi dikerjakan terpisah setelah prasyarat diperiksa; warning tidak disembunyikan dan tidak dijadikan alasan upgrade major dalam Phase 05.
+
+## Mengulang audit
+
+```bash
+flutter --version
+flutter pub get
+flutter pub outdated
+flutter analyze
+python tools/dependency_health_audit.py --output build/dependency-health.json
+flutter test --reporter expanded
+flutter build apk --debug
+```
+
+Tool audit memakai Python standard library, membaca versi terkunci, memeriksa status pub.dev/repository direct, dan menghasilkan laporan JSON. Metadata yang gagal diambil tetap dicatat sebagai error; jangan menganggapnya sudah lolos. Bukti audit adalah snapshot waktu tertentu dan harus diperbarui ketika versi/dependency atau toolchain berubah.

@@ -28,9 +28,23 @@ Empat menu utama: **Dashboard, Logbook, Edukasi, Notifikasi**. Fitur tambahan di
 | `operator` | Role lama dipetakan ke `operator_lapangan` |
 | `mitra` / `peserta_edukasi` | Role lama tetap dapat membaca modul nonkeuangan |
 
-Keuangan dan laporan keuangan pada UI dibatasi ke admin/operator keuangan aktif. Pembatasan UI tidak menggantikan Firestore Security Rules. Rules yang diwarisi masih mengizinkan pembacaan transaksi oleh semua pengguna aktif; evaluasi penyempitan rules memerlukan pekerjaan keamanan terpisah. Phase 01 tidak mengubah rules.
+Keuangan dan laporan keuangan dibatasi ke admin/operator keuangan aktif melalui capability UI, guard service, dan Firestore Rules Phase 05. Operator lapangan, legacy read-only, akun inaktif dan pengguna tanpa autentikasi ditolak saat membaca `finance_transactions`, termasuk melalui SDK langsung. Pengelola perlu menerapkan Rules baru secara manual setelah review.
 
 Akun baru memakai `operator_lapangan`. Pengelola berwenang mengatur role pada `users/{uid}`. Pastikan akun aktif melalui `isActive`/`is_active`.
+
+## Dashboard Monitoring & Produktivitas
+
+Dashboard mempertahankan banner hijau, kartu rounded, diagram nutrisi, timeline dan empat navigasi original. Sumber operasional tetap **Cloud Firestore**, tanpa dataset contoh otomatis. Grafik menggunakan **fl_chart 1.2.0** existing.
+
+- **KPI aktual:** modul aktif, batch aktif/completed, aktivitas Logbook hari ini, jadwal pending/done/skipped, serta stok rendah/habis berdasarkan saldo aktual. Count global memakai agregasi; stok dibaca maksimal 200 item dan diberi label cakupan terbatas bila lebih banyak.
+- **Periode bersama:** Hari Ini, 7/30/90 Hari Terakhir, atau rentang custom maksimal 366 hari kalender lokal. Kartu kondisi terkini tetap berlabel **Saat Ini**; KPI harian tetap **Hari Ini**.
+- **Lima modul:** telur/populasi Ayam, limbah/fase/estimasi Maggot, kelembapan/pakan Cacing, tinggi/daun Tanaman, serta pH/suhu/pakan/bobot Lele. Metrik dan kelompok pengamatan dapat dipilih; satuan dan batch/komoditas dipisahkan. Hari tanpa data tidak diisi angka buatan.
+- **Monitoring batch:** semua status termasuk completed/archived dapat dipilih dari daftar berhalaman, dengan estimasi panen, aktivitas terakhir pada periode dan tautan Detail Batch. Catatan tanpa batch tetap terbaca.
+- **Produksi aktual:** hanya production result valid yang terhubung ke Logbook, per jenis produk/satuan. Tidak menjumlahkan ulang pengamatan dan mutasi stok. Estimasi/target bukan panen aktual; sumber yang tidak dapat diverifikasi diberi pesan ketidakpastian.
+- **Timeline terpadu:** Logbook terbaru, jadwal hari ini, dan checklist selesai; tautan Detail Logbook/Jadwal/Batch mempertahankan identitas catatan.
+- **Nutrisi dan keuangan:** ilustrasi siklus diberi label konsep; catatan transfer aktual ditampilkan terpisah. Finance menampilkan pemasukan, pengeluaran dan arus kas bersih hanya untuk role berwenang, dengan error tersendiri bila gagal.
+
+Data diambil melalui refresh manual, dengan waktu pembaruan terakhir. Tidak ada klaim LIVE. Detail rumus, batas pembacaan, hasil QA, serta deployment Rules/index manual tersedia di [Phase 05](docs/PHASE_05_DASHBOARD_MONITORING.md). Kebijakan untuk semua phase berikutnya dan audit dependency ada di [Dependency Health](docs/DEPENDENCY_HEALTH.md).
 
 ## Alur Logbook
 

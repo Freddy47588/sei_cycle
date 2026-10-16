@@ -110,3 +110,19 @@ Rentang tanggal mengikuti field urutan, sehingga tidak menambah index terpisah. 
 Inventaris/histori/jadwal memakai limit/cursor 20. Pencarian dan filter kondisi stok/urutan tambahan pada inventaris berlaku untuk hasil dimuat. Listener inventaris hanya menanyakan ID barang dari setiap halaman yang dimuat, tanpa composite index baru; dibatalkan pada reset/dispose. Query reminder memakai isDeleted=false, status=pending, rentang date 14 hari, limit 50, dengan index jadwal existing. Tidak ada hitungan global berdasarkan satu halaman.
 
 Definisi baseline dipertahankan dan tambahan diperiksa tanpa duplikasi. Emulator menguji kontrak query/cursor, bukan kesiapan index produksi. Rules/index Phase 04 tidak dideploy; pengelola harus meninjau dan menerapkannya secara manual pada project yang disetujui. Lihat [Phase 04](PHASE_04_INVENTORY_SCHEDULE.md).
+
+
+## Phase 05: monitoring produktivitas
+
+Baseline aa6bfb8 memiliki 74 composite index. Phase 05 menambah empat kombinasi yang benar-benar dipakai, menjadi **78 composite index**, tanpa mengembalikan single-field index produksi/aliran yang pernah menyebabkan HTTP 400:
+
+| Collection | Equality ASC | Urutan DESC | Pemakaian |
+| --- | --- | --- | --- |
+| schedules | isDeleted | date | Pratinjau jadwal hari ini terbaru |
+| schedules | isDeleted, status | completedAt | Checklist selesai berdasarkan waktu pelaksanaan |
+| logbooks | isDeleted, moduleType, batchId | activityDate | Monitoring modul + batch + periode |
+| production_results | moduleType, batchId | harvestDate | Produksi aktual modul + batch + periode |
+
+Query tanpa batch menggunakan index modul/tanggal existing. Count modul aktif/batch status menggunakan agregasi tanpa mendownload dokumen; count jadwal harian/status menggunakan isDeleted/status/date yang sudah ada. Stock memakai isDeleted + document ID default dengan limit 201. Circular flow memakai single-field flowDate bawaan, bukan composite satu-field. Parent produksi ditelusuri melalui document ID `whereIn` maksimal 30 ID per permintaan.
+
+Semua pembacaan dokumen Dashboard dibatasi. `failed-precondition` dan `permission-denied` tidak memicu fallback collection scan. Emulator memverifikasi izin dan bentuk query, bukan kesiapan index produksi. Pengelola harus meninjau dan menerapkan **Rules serta index bersama-sama secara manual**, menunggu index siap, lalu melakukan smoke test perangkat; agent tidak melakukan deployment Firebase.

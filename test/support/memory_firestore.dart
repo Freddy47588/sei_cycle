@@ -5,6 +5,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class MemoryFirestore implements FirebaseFirestore {
   final documents = <String, Map<String, dynamic>>{};
   final queries = <String>[];
+  final queryLimits = <String, List<int?>>{};
+  final aggregateQueries = <String>[];
+  final queryErrors = <String, Object>{};
   bool failCommit = false;
   bool commitThenDeny = false;
   bool denyNextCommittedWrite = false;
@@ -54,6 +57,7 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
     this.after,
     this.order,
     this.descending = false,
+    this.aggregateRead = false,
   ]);
   final MemoryFirestore database;
   @override
@@ -63,6 +67,7 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
   final String? after;
   final String? order;
   final bool descending;
+  final bool aggregateRead;
   @override
   DocumentReference<Map<String, dynamic>> doc([String? id]) =>
       MemoryDocument(database, '$path/${id ?? 'auto-${database._id++}'}');
@@ -70,7 +75,7 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
   dynamic noSuchMethod(Invocation invocation) {
     if (invocation.memberName == #where) {
       final rawKey = invocation.positionalArguments.first;
-      final key = rawKey is String ? rawKey : 'id';
+      final key = rawKey is String ? rawKey : '__name__';
       final args = invocation.namedArguments;
       return MemoryCollection(
         database,
@@ -82,7 +87,8 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
               return (args[#whereIn] as Iterable).contains(data[key]);
             }
             if (args[#isEqualTo] != null) return data[key] == args[#isEqualTo];
-            final value = data[key] as Timestamp;
+            final value = data[key];
+            if (value is! Timestamp) return false;
             if (args[#isGreaterThanOrEqualTo] != null) {
               return value.compareTo(
                     args[#isGreaterThanOrEqualTo] as Timestamp,
@@ -119,7 +125,9 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
         predicates,
         maximum,
         after,
-        invocation.positionalArguments.first as String,
+        invocation.positionalArguments.first is String
+            ? invocation.positionalArguments.first as String
+            : '__name__',
         invocation.namedArguments[#descending] as bool? ?? false,
       );
     }
@@ -136,19 +144,33 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
         descending,
       );
     }
+    if (invocation.memberName == #count) return MemoryAggregate(this);
     if (invocation.memberName == #get) {
+      if (database.queryErrors[path] case final error?) {
+        return Future<QuerySnapshot<Map<String, dynamic>>>.error(error);
+      }
       database.queries.add(path);
+      if (!aggregateRead) {
+        database.queryLimits.putIfAbsent(path, () => []).add(maximum);
+      }
       var rows = database.documents.entries
           .where(
             (e) =>
                 e.key.startsWith('$path/') &&
                 e.key.split('/').length == path.split('/').length + 1 &&
-                predicates.every((p) => p(e.value)),
+                predicates.every(
+                  (p) => p({...e.value, '__name__': e.key.split('/').last}),
+                ) &&
+                (order == null ||
+                    order == '__name__' ||
+                    e.value.containsKey(order)),
           )
           .toList();
       rows.sort((a, b) {
         final primary = order == null
             ? 0
+            : order == '__name__'
+            ? a.key.compareTo(b.key)
             : (a.value[order] as Comparable).compareTo(b.value[order]);
         final result = primary == 0 ? a.key.compareTo(b.key) : primary;
         return descending ? -result : result;
@@ -259,6 +281,41 @@ class MemoryTransaction implements Transaction {
     return this;
   }
 
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class MemoryAggregate implements AggregateQuery {
+  MemoryAggregate(this.query);
+  @override
+  final MemoryCollection query;
+  @override
+  Future<AggregateQuerySnapshot> get({
+    AggregateSource source = AggregateSource.server,
+  }) async {
+    query.database.aggregateQueries.add(query.path);
+    final aggregate = MemoryCollection(
+      query.database,
+      query.path,
+      query.predicates,
+      query.maximum,
+      query.after,
+      query.order,
+      query.descending,
+      true,
+    );
+    final snapshot = await aggregate.get();
+    return MemoryAggregateSnapshot(snapshot.docs.length);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class MemoryAggregateSnapshot implements AggregateQuerySnapshot {
+  MemoryAggregateSnapshot(this.count);
+  @override
+  final int count;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

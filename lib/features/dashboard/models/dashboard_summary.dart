@@ -7,6 +7,12 @@ class DashboardActivity {
     required this.icon,
     required this.color,
     required this.done,
+    this.id = '',
+    this.source = 'logbook',
+    this.moduleType = '',
+    this.status = 'recorded',
+    this.batchId,
+    this.occurredAt,
   });
 
   final String time;
@@ -14,6 +20,9 @@ class DashboardActivity {
   final IconData icon;
   final Color color;
   final bool done;
+  final String id, source, moduleType, status;
+  final String? batchId;
+  final DateTime? occurredAt;
 }
 
 class RevenueBreakdownItem {
@@ -54,6 +63,7 @@ class DashboardCircularFlow {
     required this.quantity,
     required this.unit,
     required this.notes,
+    this.flowDate,
   });
 
   final String sourceModuleType;
@@ -62,6 +72,7 @@ class DashboardCircularFlow {
   final double quantity;
   final String unit;
   final String notes;
+  final DateTime? flowDate;
 }
 
 class DashboardSummary {
@@ -78,6 +89,16 @@ class DashboardSummary {
     required this.circularFlows,
     required this.lowStockPreview,
     required this.financeVisible,
+    this.activeBatchCount = 0,
+    this.completedBatchCount = 0,
+    this.pendingScheduleCount = 0,
+    this.doneScheduleCount = 0,
+    this.skippedScheduleCount = 0,
+    this.outOfStockCount = 0,
+    this.inventoryLoaded = 0,
+    this.inventoryTruncated = false,
+    this.financeError,
+    this.updatedAt,
   });
 
   final int activeModuleCount;
@@ -92,6 +113,12 @@ class DashboardSummary {
   final List<DashboardCircularFlow> circularFlows;
   final List<LowStockDashboardItem> lowStockPreview;
   final bool financeVisible;
+  final int activeBatchCount, completedBatchCount;
+  final int pendingScheduleCount, doneScheduleCount, skippedScheduleCount;
+  final int outOfStockCount, inventoryLoaded;
+  final bool inventoryTruncated;
+  final Object? financeError;
+  final DateTime? updatedAt;
 
   bool get hasFinanceData => monthlyIncome > 0 || monthlyExpense > 0;
 }

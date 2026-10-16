@@ -1,331 +1,93 @@
-# SeiCycle - MVP Flutter + Firebase
+﻿# SeiCycle — Kebun Sei
 
-SeiCycle adalah aplikasi operasional Kebun Sei untuk mencatat aktivitas Ayam
-Kampung, Maggot BSF, Cacing Tanah, Lele, Tanaman, inventaris, jadwal, edukasi,
-dan keuangan sederhana.
+Aplikasi **Flutter dan Dart** untuk operasional pertanian dan peternakan terintegrasi Kebun Sei: Ayam, Maggot BSF, Cacing Tanah, Tanaman, dan Lele.
 
-## Arsitektur MVP
+SeiCycle menggunakan **Firebase Authentication** untuk autentikasi dan **Cloud Firestore sebagai database aplikasi**. Akses data langsung dari Flutter dilindungi Firestore Security Rules.
 
-MVP menggunakan arsitektur **full Firebase direct dari Flutter**:
+## Fitur yang tersedia
 
-```text
-Flutter app
-  - Firebase Authentication
-  - Cloud Firestore
-  - Firebase Cloud Messaging untuk permission/token/client readiness
-  - Flutter local notification boleh dipakai untuk reminder lokal client-side
+- Login email/password dan Google, registrasi, profil, serta role pengguna.
+- Dashboard ringkasan modul, logbook, stok rendah, jadwal, aktivitas, dan keuangan sesuai hak akses. Error dan data kosong tidak diganti angka contoh.
+- Form Logbook lima modul, simpan catatan, riwayat yang sudah tersedia, transaksi inventaris, serta hasil produksi terkait.
+- Inventaris, jadwal, keuangan, rekomendasi berbasis aturan, dan laporan PDF/Excel.
+- Katalog edukasi artikel, SOP, serta video dari teks/URL eksternal; thumbnail dan gambar lokal sebagai fallback. Pembaca detail lengkap dikembangkan pada Phase 07.
+- Notifikasi dalam aplikasi melalui inbox Firestore dan pengingat lokal. FCM saat ini terbatas pada permission/token client; pengiriman push terjadwal dari server belum tersedia.
+- Pengelolaan data admin yang sudah tersedia. Data sampel hanya dibuat melalui tindakan admin manual; pengujian UI tidak melakukan seed database.
+
+Empat menu utama: **Dashboard, Logbook, Edukasi, Notifikasi**. Fitur tambahan di mobile tersedia melalui **Lainnya**. Sidebar tampil mulai lebar 768 px mengikuti shell asli `main`.
+
+## Role dan akses UI
+
+| Role | Akses |
+| --- | --- |
+| `admin` | Seluruh menu dan pengelolaan sesuai kemampuan fitur |
+| `operator_lapangan` | Operasional, inventaris, jadwal, edukasi, notifikasi, rekomendasi operasional, laporan operasional/inventaris, profil |
+| `operator_keuangan` | Seluruh menu; pengelolaan keuangan; form Logbook dapat dibaca tetapi tombol simpan nonaktif |
+| `operator` | Role lama dipetakan ke `operator_lapangan` |
+| `mitra` / `peserta_edukasi` | Role lama tetap dapat membaca modul nonkeuangan |
+
+Keuangan dan laporan keuangan pada UI dibatasi ke admin/operator keuangan aktif. Pembatasan UI tidak menggantikan Firestore Security Rules. Rules yang diwarisi masih mengizinkan pembacaan transaksi oleh semua pengguna aktif; evaluasi penyempitan rules memerlukan pekerjaan keamanan terpisah. Phase 01 tidak mengubah rules.
+
+Akun baru memakai `operator_lapangan`. Pengelola berwenang mengatur role pada `users/{uid}`. Pastikan akun aktif melalui `isActive`/`is_active`.
+
+## Instalasi dan konfigurasi
+
+Prasyarat: Flutter stable, Dart sesuai `pubspec.yaml`, project Firebase, dan perangkat/emulator. Versi pengujian Phase 01: Flutter 3.44.2, Dart 3.12.2.
+
+```bash
+git clone https://github.com/Freddy47588/sei_cycle.git
+cd sei_cycle
+git switch feature/operational-v2
+flutter pub get
 ```
 
-Backend Express lama sudah dihapus dan tidak digunakan pada MVP. Aplikasi tidak
-memerlukan hosting API Node.js, server Express, seeders Node.js, Firebase Admin
-SDK, atau `serviceAccountKey.json`. Seluruh akses data dilakukan melalui Firebase
-SDK dari Flutter dan diamankan oleh `firestore.rules`.
-
-Repo tidak menggunakan Firebase Storage, Cloud Functions, atau backend server-side.
-Materi video, SOP, atau artikel menggunakan field `external_url`, dan FCM
-dibatasi untuk request permission serta token readiness dari client.
-
-Dokumentasi backend Firebase client-side tersedia di [docs/BACKEND.md](docs/BACKEND.md).
-Checklist final brief tersedia di
-[docs/FEATURE_COMPLETION_CHECKLIST.md](docs/FEATURE_COMPLETION_CHECKLIST.md).
-
-## Fitur yang Disiapkan
-
-- Login email/password dan Google.
-- Registrasi akun dan pembuatan otomatis `users/{uid}`.
-- Profil pengguna dan role `admin`, `operator_lapangan`, atau `operator_keuangan`.
-- Dashboard dari Firestore: logbook hari ini, stok rendah, jadwal pending,
-  ringkasan keuangan, laba/rugi, dan grafik aktivitas 7 hari.
-- Logbook tambah/edit sesuai role, hapus khusus admin, serta filter modul dan tanggal.
-- Inventaris tambah/edit sesuai role, hapus khusus admin, dan indikator `current_stock <= min_stock`.
-- Jadwal tambah/edit sesuai role, hapus khusus admin, filter tanggal, serta status `pending`, `done`, dan `skipped`.
-- Edukasi artikel/video/SOP dengan teks atau URL eksternal, dikelola admin.
-- Keuangan pemasukan, pengeluaran, total, dan laba/rugi sederhana; hapus transaksi khusus admin.
-- Seed lima dokumen `farm_modules` dari menu Profil admin.
-- Seed data sampel demo Firestore dari menu Profil admin.
-- Firestore Security Rules berbasis autentikasi dan role.
-- Notifikasi free-mode: inbox Firestore, local reminder client-side, dan ID
-  deterministik untuk alert stok rendah/jadwal overdue agar tidak spam duplicate.
-- Report PDF/Excel dibuat lokal dari data Firestore dan aman untuk data kosong.
-- Rekomendasi rule-based tetap menghasilkan fallback aman ketika data masih minim.
-
-## Checklist Brief SeiCycle
-
-### Selesai pada MVP saat ini
-
-- [x] Firebase Authentication email/password.
-- [x] Google Sign-In melalui Firebase Authentication.
-- [x] Pembuatan dan pembacaan profil `users/{uid}`.
-- [x] Role brief `admin`, `operator_lapangan`, dan `operator_keuangan`.
-- [x] Dashboard ringkasan dari Cloud Firestore.
-- [x] Logbook operasional dengan tambah, edit, hapus admin, dan filter.
-- [x] Inventaris dengan tambah, edit, hapus admin, dan indikator stok rendah.
-- [x] Jadwal dengan tambah, edit, hapus admin, filter tanggal, dan update status.
-- [x] Edukasi artikel/video/SOP berbasis teks dan URL eksternal, dengan hapus admin.
-- [x] Keuangan admin/operator keuangan untuk income, expense, total, laba/rugi sederhana, dan hapus admin.
-- [x] Seed `farm_modules` dari UI Profil admin, bukan seeder Node.js.
-- [x] Seed data sampel demo dari UI Profil admin, bukan seeder Node.js.
-- [x] Firestore schema, ERD, rules, dan konfigurasi deploy rules.
-- [x] FCM client readiness untuk request permission dan ambil token.
-- [x] Secret hygiene untuk `.env`, service account, key, dan `node_modules/`.
-
-### Belum selesai atau sengaja ditunda
-
-- [ ] Firebase Web, iOS, macOS, Windows, atau Linux options dari FlutterFire.
-- [x] Local notification reminder client-side/free-mode.
-- [x] PDF/Excel report client-side.
-- [x] Rule-based recommendation.
-- [ ] Pengiriman push notification terjadwal atau server-side.
-- [ ] Upload file atau gambar dengan Firebase Storage.
-- [ ] Cloud Functions atau backend job server-side.
-- [ ] Backend Express/API/server hosting.
-- [ ] App Check dan hardening produksi lanjutan.
-
-## Prasyarat
-
-- Flutter stable dan Dart yang kompatibel dengan `pubspec.yaml`.
-- Project Firebase.
-- Firebase CLI untuk deploy rules.
-- FlutterFire CLI untuk menghasilkan konfigurasi platform.
-
-## Setup Firebase
-
-### 1. Buat dan daftarkan aplikasi Firebase
-
-1. Buat atau buka project di [Firebase Console](https://console.firebase.google.com/).
-2. Daftarkan aplikasi Android dengan package name `id.seicycle.app`.
-3. Unduh `google-services.json` dan simpan lokal di:
-
-   ```text
-   android/app/google-services.json
-   ```
-
-File tersebut di-ignore agar konfigurasi lokal tidak ikut commit.
-
-### 2. Konfigurasi FlutterFire
-
-Install FlutterFire CLI lalu jalankan konfigurasi dari root project:
+1. Daftarkan aplikasi Android dengan package `id.seicycle.app` pada project Firebase.
+2. Simpan konfigurasi lokal di `android/app/google-services.json` (diabaikan Git).
+3. Aktifkan Authentication email/password dan Google; daftarkan SHA-1/SHA-256 untuk Google Sign-In Android.
+4. Siapkan database Cloud Firestore, rules dan indexes sesuai lingkungan. Baca [backend](docs/BACKEND.md), [schema](docs/FIRESTORE_SCHEMA.md), serta [indexes](docs/FIRESTORE_INDEXES.md) sebelum deployment.
+5. Konfigurasi FlutterFire untuk platform yang akan digunakan:
 
 ```bash
 dart pub global activate flutterfire_cli
 flutterfire configure
-```
-
-Perintah ini menghasilkan atau memperbarui `lib/firebase_options.dart`.
-Konfigurasi yang tersimpan saat ini hanya mencakup Android dari
-`google-services.json`. Jalankan `flutterfire configure` sebelum menjalankan
-Web, iOS, macOS, atau desktop.
-
-`main.dart` sudah menjalankan:
-
-```dart
-WidgetsFlutterBinding.ensureInitialized();
-await Firebase.initializeApp(
-  options: DefaultFirebaseOptions.currentPlatform,
-);
-```
-
-### 3. Aktifkan Authentication
-
-Di Firebase Console buka **Authentication > Sign-in method**:
-
-1. Aktifkan **Email/Password**.
-2. Aktifkan **Google** dan pilih support email.
-3. Untuk Google Sign-In Android, tambahkan fingerprint SHA-1 dan SHA-256 pada
-   Firebase project settings, lalu unduh ulang `google-services.json`.
-
-### 4. Buat Cloud Firestore
-
-Di Firebase Console buka **Firestore Database**, buat database, lalu pilih
-region yang sesuai. Deploy rules dari repo:
-
-```bash
-firebase login
-firebase use --add
-firebase deploy --only firestore:rules
-```
-
-Rules MVP berada di `firestore.rules`.
-
-### 5. Buat farm modules
-
-Login menggunakan akun admin, buka **Profil**, lalu tekan **Seed** pada bagian
-`farm_modules`. Dokumen yang dibuat:
-
-- `ayam_kampung`
-- `maggot_bsf`
-- `cacing_tanah`
-- `lele`
-- `tanaman`
-
-Seeder ini berjalan dari Flutter client menggunakan akun admin dan Firestore
-Rules. Tidak ada script seeder Node.js atau Firebase Admin SDK.
-
-## Collection Firestore
-
-| Collection | Document ID | Fungsi |
-|---|---|---|
-| `users` | UID Firebase Auth | Profil dan role pengguna |
-| `farm_modules` | ID modul tetap | Master lima modul Kebun Sei |
-| `logbooks` | UUID | Catatan aktivitas operasional |
-| `inventory` | UUID | Stok, item key, dan batas minimum |
-| `inventory_transactions` | UUID | Histori perubahan stok dari Logbook |
-| `production_results` | UUID | Hasil produksi atau panen dari Logbook |
-| `circular_flows` | ID aliran tetap/UUID | Aliran nutrisi antar modul untuk Dashboard |
-| `schedules` | UUID | Kalender dan status pekerjaan |
-| `education_contents` | UUID | Artikel, video URL, dan SOP |
-| `finance_transactions` | UUID | Pemasukan dan pengeluaran admin/operator keuangan |
-| `notifications` | Deterministik/UUID | Inbox notifikasi free-mode |
-| `report_metadata` | UUID | Metadata laporan/export client |
-| `recommendations` | UUID | Snapshot rekomendasi opsional |
-
-Detail field tersedia di [docs/FIRESTORE_SCHEMA.md](docs/FIRESTORE_SCHEMA.md).
-Panduan data sampel demo tersedia di [docs/SAMPLE_DATA.md](docs/SAMPLE_DATA.md).
-
-## Data Demo, Logbook, dan Dashboard
-
-Seeder demo berjalan dari aplikasi Flutter, bukan Node.js, Firebase Admin SDK,
-atau credential server. Login sebagai admin aktif, buka **Profil**, lalu tekan
-**Seed sampel**. Seeder membuat data sample untuk:
-
-- `farm_modules`
-- `logbooks`
-- `inventory`
-- `inventory_transactions`
-- `production_results`
-- `circular_flows`
-- `schedules`
-- `finance_transactions`
-- `notifications`
-
-Alur data Logbook:
-
-```text
-Logbook form
-  -> logbooks
-  -> inventory update
-  -> inventory_transactions
-  -> production_results
-  -> notifications low_stock
-```
-
-Alur data Dashboard:
-
-```text
-Dashboard
-  -> farm_modules
-  -> logbooks
-  -> inventory
-  -> schedules
-  -> finance_transactions
-  -> circular_flows
-  -> production_results
-```
-
-Deploy rules dan indexes:
-
-```bash
-firebase deploy --only firestore:rules
-firebase deploy --only firestore:indexes
-```
-
-Catatan scope MVP: Firebase Storage belum dipakai, rekomendasi AI masih
-rule-based/placeholder, dan credential seperti `.env`, `serviceAccountKey.json`,
-token Firebase, atau private key tidak boleh di-commit.
-
-## Role dan Akses
-
-| Role | Akses |
-|---|---|
-| `admin` | Semua fitur, seluruh data, dan aksi hapus data utama |
-| `operator_lapangan` | Bisa melihat semua menu; tambah/edit logbook operasional, inventaris, dan jadwal |
-| `operator_keuangan` | Bisa melihat semua menu; tambah/edit pemasukan/pengeluaran dan laporan keuangan |
-| `operator` | Legacy: dipetakan sebagai `operator_lapangan` |
-| `mitra` / `peserta_edukasi` | Legacy: bisa melihat semua menu, tetapi read-only |
-
-Semua akun baru memiliki role `operator_lapangan`. Untuk MVP, ubah admin atau operator keuangan secara manual:
-
-1. Buka **Firestore Database > users**.
-2. Pilih dokumen dengan ID UID pengguna.
-3. Ubah field `role` menjadi `admin`, `operator_lapangan`, atau `operator_keuangan`.
-4. Pastikan `isActive` atau `is_active` bernilai `true`.
-
-UI role membantu pengalaman pengguna: semua user aktif bisa membuka semua menu,
-tetapi tombol tambah/edit hanya muncul sesuai akses role dan tombol hapus hanya
-muncul untuk admin. Otorisasi final tetap dilakukan oleh Firestore Security
-Rules. `finance_transactions` bisa dibaca user aktif untuk tampilan dashboard/laporan,
-tetapi hanya admin dan operator keuangan yang boleh menambah atau mengubah
-transaksi; hapus transaksi dibatasi untuk admin.
-
-## Menjalankan Aplikasi
-
-```bash
-flutter pub get
-flutter analyze --no-pub
-flutter test --no-pub --reporter expanded
 flutter run
 ```
 
-Verifikasi final branch ini pada 28 Juni 2026:
+`lib/firebase_options.dart` saat ini hanya mendukung Android. Web, iOS, macOS, Windows, dan Linux memerlukan konfigurasi tambahan. Aplikasi tidak menggunakan backend Express, Firebase Admin SDK, atau Firebase Storage. Jangan memakai credential milik orang lain.
 
-- `flutter pub get` berhasil.
-- `flutter analyze --no-pub` tidak menemukan error fatal; tersisa 5 info/lint
-  non-blocking terkait deprecated `Share.shareXFiles` dan enum
-  `full_summary`.
-- `flutter test --no-pub --reporter expanded` berhasil setelah patch final.
+## Validasi
 
-Untuk Android, pastikan `android/app/google-services.json` tersedia. Untuk Web
-atau platform lain, jalankan `flutterfire configure` terlebih dahulu.
-
-## Struktur Utama
-
-```text
-lib/
-  app/
-    app.dart
-    app_shell.dart
-  core/
-    constants/
-    services/
-    utils/
-    widgets/
-  features/
-    auth/
-    dashboard/
-    farm_modules/
-    logbook/
-    inventory/
-    schedule/
-    education/
-    finance/
-    profile/
-docs/
-  BACKEND.md
-  ERD.md
-  FEATURE_COMPLETION_CHECKLIST.md
-  FIRESTORE_SCHEMA.md
+```bash
+flutter analyze
+flutter test
+git diff --check
 ```
 
-## Keamanan Credential
+Widget tests memakai loader, streams, dan service mock tanpa mengakses Firebase. Untuk menghasilkan PNG di `build/phase01/`:
 
-Jangan commit credential admin Firebase atau private key. `.gitignore`
-mencakup:
-
-```text
-serviceAccountKey.json
-.env
-*.pem
-*.key
-node_modules/
+```bash
+flutter test test/phase01_ui_test.dart --dart-define=CAPTURE_UI=true
 ```
 
-Firebase Web/Android API key pada file konfigurasi client bukan private admin
-credential; keamanan data tetap harus bergantung pada Authentication,
-authorized domains, App Check bila diperlukan, dan Firestore Rules.
+Opsional: set environment variable `FLUTTER_ROOT` ke direktori Flutter SDK agar PNG memakai font Roboto dari cache SDK. PNG adalah render widget dengan data uji lokal, bukan bukti koneksi produksi.
 
-## Ditunda Setelah MVP
+[Audit Phase 01](docs/PHASE_01_UI_AUDIT.md) mencatat baseline, perbandingan desain, pengujian, dan batas verifikasi. Referensi asli tersedia di folder `screenshots/` pada branch `main`.
 
-- Backend Express/API sendiri.
-- Cloud Functions dan backend scheduler.
-- Upload media lewat Firebase Storage.
-- Pengiriman FCM push notification server-side jika belum diperlukan.
+## Struktur dan dokumentasi
+
+```text
+lib/app/             Shell dan navigasi
+lib/core/            Komponen, utilitas, layanan bersama
+lib/features/        Modul aplikasi dan layanan Firestore
+lib/theme/           Palet dan token desain
+test/                Pengujian model, layanan, dan widget
+docs/                Dokumentasi implementasi
+```
+
+- [Arsitektur backend](docs/BACKEND.md)
+- [Schema Cloud Firestore](docs/FIRESTORE_SCHEMA.md)
+- [ERD](docs/ERD.md)
+- [Firestore Rules](docs/FIRESTORE_RULES.md)
+- [Data sampel manual](docs/SAMPLE_DATA.md)
+
+Jangan memasukkan service account, private key, `.env`, atau token pribadi ke repository. Video memakai tautan eksternal. Firebase Storage, pembaca detail edukasi lengkap, pengiriman FCM server, serta hardening produksi lanjutan belum dinyatakan selesai.

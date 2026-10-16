@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 
 abstract final class AppSpacing {
-  static const double page = 16;
-  static const double pageCompact = 14;
-  static const double section = 18;
-  static const double card = 12;
+  static const double page = 20;
+  static const double pageCompact = 16;
+  static const double section = 24;
+  static const double card = 16;
   static const double gap = 10;
 }
 
@@ -29,15 +29,15 @@ class AppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppRadii.card),
       side: BorderSide(color: borderColor ?? Colors.transparent),
     );
     final content = Padding(padding: padding, child: child);
 
     return Material(
       color: color ?? AppColors.surface,
-      elevation: 1,
-      shadowColor: Colors.black.withValues(alpha: 0.06),
+      elevation: AppElevation.card,
+      shadowColor: AppElevation.shadow,
       shape: shape,
       clipBehavior: Clip.antiAlias,
       child: onTap == null ? content : InkWell(onTap: onTap, child: content),
@@ -113,7 +113,7 @@ class StatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadii.card),
         border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
@@ -123,14 +123,16 @@ class StatusBadge extends StatelessWidget {
             Icon(icon, size: 12, color: color),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -321,6 +323,7 @@ class AppFilterChip extends StatelessWidget {
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       visualDensity: VisualDensity.compact,
       labelStyle: TextStyle(
+        fontFamily: AppTypography.family,
         color: selected ? Colors.white : color,
         fontSize: 12,
         fontWeight: selected ? FontWeight.w800 : FontWeight.w600,

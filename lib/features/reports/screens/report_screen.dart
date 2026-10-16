@@ -36,14 +36,19 @@ class _ReportScreenState extends State<ReportScreen> {
     _filter = ReportFilter(
       startDate: now.subtract(const Duration(days: 30)),
       endDate: now,
-      reportType: ReportType.fullSummary,
+      reportType: widget.profile.canViewFinance
+          ? ReportType.fullSummary
+          : ReportType.operational,
     );
     _load();
   }
 
   void _load() {
     setState(() {
-      _dataFuture = _service.generateReport(_filter);
+      _dataFuture = _service.generateReport(
+        _filter,
+        includeFinance: widget.profile.canViewFinance,
+      );
     });
   }
 
@@ -132,7 +137,12 @@ class _ReportScreenState extends State<ReportScreen> {
               prefixIcon: Icon(Icons.tune_rounded),
             ),
             items: [
-              for (final type in ReportType.values)
+              for (final type in ReportType.values.where(
+                (type) =>
+                    widget.profile.canViewFinance ||
+                    type == ReportType.operational ||
+                    type == ReportType.inventory,
+              ))
                 DropdownMenuItem(
                   value: type,
                   child: Text(_reportTypeLabel(type)),

@@ -75,7 +75,7 @@ void main() {
       expect(user.canViewLogbooks, isTrue);
       expect(user.canViewInventory, isTrue);
       expect(user.canViewSchedules, isTrue);
-      expect(user.canViewFinance, isTrue);
+      expect(user.canViewFinance, user.isAdmin || user.isOperatorKeuangan);
       expect(user.canViewRecommendations, isTrue);
       expect(user.canViewReports, isTrue);
     }
@@ -110,7 +110,7 @@ void main() {
       expect(user.canViewLogbooks, isTrue);
       expect(user.canViewInventory, isTrue);
       expect(user.canViewSchedules, isTrue);
-      expect(user.canViewFinance, isTrue);
+      expect(user.canViewFinance, user.isAdmin || user.isOperatorKeuangan);
       expect(user.canViewRecommendations, isTrue);
       expect(user.canViewReports, isTrue);
       expect(user.canManageLogbooks, isFalse);

@@ -10,7 +10,8 @@ import '../models/logbook_entry.dart';
 import '../services/logbook_service.dart';
 
 class LogbookScreen extends StatefulWidget {
-  const LogbookScreen({required this.profile, super.key});
+  const LogbookScreen({required this.profile, this.service, super.key});
+  final LogbookService? service;
 
   final AppUser profile;
 
@@ -54,22 +55,32 @@ class _LogbookScreenState extends State<LogbookScreen>
               AyamModule(
                 userId: widget.profile.uid,
                 canDeleteHistory: widget.profile.canDeleteLogbooks,
+                canSave: widget.profile.canManageLogbooks,
+                service: widget.service,
               ),
               MaggotModule(
                 userId: widget.profile.uid,
                 canDeleteHistory: widget.profile.canDeleteLogbooks,
+                canSave: widget.profile.canManageLogbooks,
+                service: widget.service,
               ),
               CacingModule(
                 userId: widget.profile.uid,
                 canDeleteHistory: widget.profile.canDeleteLogbooks,
+                canSave: widget.profile.canManageLogbooks,
+                service: widget.service,
               ),
               TanamanModule(
                 userId: widget.profile.uid,
                 canDeleteHistory: widget.profile.canDeleteLogbooks,
+                canSave: widget.profile.canManageLogbooks,
+                service: widget.service,
               ),
               LeleModule(
                 userId: widget.profile.uid,
                 canDeleteHistory: widget.profile.canDeleteLogbooks,
+                canSave: widget.profile.canManageLogbooks,
+                service: widget.service,
               ),
             ],
           ),
@@ -203,7 +214,11 @@ Widget _buildField(
     padding: const EdgeInsets.only(bottom: 14),
     child: TextFormField(
       initialValue: initialValue,
-      keyboardType: type,
+      keyboardType: maxLines > 1 ? TextInputType.multiline : type,
+      scrollPadding: const EdgeInsets.only(bottom: 100),
+      textInputAction: maxLines == 1
+          ? TextInputAction.next
+          : TextInputAction.newline,
       maxLines: maxLines,
       onChanged: onChanged,
       decoration: InputDecoration(
@@ -245,30 +260,41 @@ Widget _buildSubmitRow({
   required VoidCallback? onSubmit,
   required bool saving,
 }) {
-  return Row(
-    children: [
-      Expanded(
-        child: OutlinedButton.icon(
-          onPressed: saving ? null : onHistory,
-          icon: const Icon(Icons.history_outlined, size: 18),
-          label: const Text('Lihat Riwayat'),
-        ),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
-        child: ElevatedButton.icon(
-          onPressed: saving ? null : onSubmit,
-          icon: saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save_outlined, size: 18),
-          label: Text(saving ? 'Menyimpan...' : 'Simpan Catatan'),
-        ),
-      ),
-    ],
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final stacked =
+          constraints.maxWidth < 360 ||
+          MediaQuery.textScalerOf(context).scale(1) > 1.2;
+      final history = OutlinedButton.icon(
+        onPressed: saving ? null : onHistory,
+        icon: const Icon(Icons.history_outlined, size: 18),
+        label: const Text('Lihat Riwayat'),
+      );
+      final save = ElevatedButton.icon(
+        onPressed: saving ? null : onSubmit,
+        icon: saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.save_outlined, size: 18),
+        label: Text(saving ? 'Menyimpan...' : 'Simpan Catatan'),
+      );
+      if (stacked) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [history, const SizedBox(height: 12), save],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: history),
+          const SizedBox(width: 12),
+          Expanded(child: save),
+        ],
+      );
+    },
   );
 }
 
@@ -276,11 +302,15 @@ class AyamModule extends StatefulWidget {
   const AyamModule({
     required this.userId,
     required this.canDeleteHistory,
+    this.canSave = true,
+    this.service,
     super.key,
   });
 
   final String userId;
   final bool canDeleteHistory;
+  final bool canSave;
+  final LogbookService? service;
 
   @override
   State<AyamModule> createState() => _AyamModuleState();
@@ -295,17 +325,27 @@ class _AyamModuleState extends _ModuleFormState<AyamModule> {
 
   @override
   bool get canDeleteHistory => widget.canDeleteHistory;
+
+  @override
+  bool get canSave => widget.canSave;
+
+  @override
+  LogbookService? get injectedService => widget.service;
 }
 
 class MaggotModule extends StatefulWidget {
   const MaggotModule({
     required this.userId,
     required this.canDeleteHistory,
+    this.canSave = true,
+    this.service,
     super.key,
   });
 
   final String userId;
   final bool canDeleteHistory;
+  final bool canSave;
+  final LogbookService? service;
 
   @override
   State<MaggotModule> createState() => _MaggotModuleState();
@@ -320,17 +360,27 @@ class _MaggotModuleState extends _ModuleFormState<MaggotModule> {
 
   @override
   bool get canDeleteHistory => widget.canDeleteHistory;
+
+  @override
+  bool get canSave => widget.canSave;
+
+  @override
+  LogbookService? get injectedService => widget.service;
 }
 
 class CacingModule extends StatefulWidget {
   const CacingModule({
     required this.userId,
     required this.canDeleteHistory,
+    this.canSave = true,
+    this.service,
     super.key,
   });
 
   final String userId;
   final bool canDeleteHistory;
+  final bool canSave;
+  final LogbookService? service;
 
   @override
   State<CacingModule> createState() => _CacingModuleState();
@@ -345,17 +395,27 @@ class _CacingModuleState extends _ModuleFormState<CacingModule> {
 
   @override
   bool get canDeleteHistory => widget.canDeleteHistory;
+
+  @override
+  bool get canSave => widget.canSave;
+
+  @override
+  LogbookService? get injectedService => widget.service;
 }
 
 class TanamanModule extends StatefulWidget {
   const TanamanModule({
     required this.userId,
     required this.canDeleteHistory,
+    this.canSave = true,
+    this.service,
     super.key,
   });
 
   final String userId;
   final bool canDeleteHistory;
+  final bool canSave;
+  final LogbookService? service;
 
   @override
   State<TanamanModule> createState() => _TanamanModuleState();
@@ -370,17 +430,27 @@ class _TanamanModuleState extends _ModuleFormState<TanamanModule> {
 
   @override
   bool get canDeleteHistory => widget.canDeleteHistory;
+
+  @override
+  bool get canSave => widget.canSave;
+
+  @override
+  LogbookService? get injectedService => widget.service;
 }
 
 class LeleModule extends StatefulWidget {
   const LeleModule({
     required this.userId,
     required this.canDeleteHistory,
+    this.canSave = true,
+    this.service,
     super.key,
   });
 
   final String userId;
   final bool canDeleteHistory;
+  final bool canSave;
+  final LogbookService? service;
 
   @override
   State<LeleModule> createState() => _LeleModuleState();
@@ -395,10 +465,16 @@ class _LeleModuleState extends _ModuleFormState<LeleModule> {
 
   @override
   bool get canDeleteHistory => widget.canDeleteHistory;
+
+  @override
+  bool get canSave => widget.canSave;
+
+  @override
+  LogbookService? get injectedService => widget.service;
 }
 
 abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
-  final _service = LogbookService();
+  late final _service = injectedService ?? LogbookService();
   final _values = <String, String>{};
   bool _saving = false;
   double? _sliderValue;
@@ -406,22 +482,26 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
   _ModuleSpec get spec;
   String get userId;
   bool get canDeleteHistory;
+  bool get canSave;
+  LogbookService? get injectedService;
 
   @override
   void initState() {
     super.initState();
-    _sliderValue = spec.slider?.initialValue;
+    _sliderValue = null;
     for (final section in spec.sections) {
       for (final field in section.fields) {
-        _values[field.key] = field.initialValue ?? '';
+        _values[field.key] = '';
       }
-    }
-    if (spec.slider != null) {
-      _values[spec.slider!.key] = spec.slider!.initialValue.toStringAsFixed(0);
     }
   }
 
   Future<void> _submit() async {
+    if (!canSave) return;
+    if (_values.values.every((value) => value.trim().isEmpty)) {
+      _showMessage('Isi hasil pengamatan sebelum menyimpan catatan.');
+      return;
+    }
     if (userId.trim().isEmpty) {
       _showMessage('User belum terdeteksi. Silakan login ulang.');
       return;
@@ -541,16 +621,13 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
           'Produksi Hari Ini',
           value('produksi_telur_hari_ini', 'butir'),
         ),
-        _BannerStat(
-          'Mortalitas',
-          value('mortalitas_hari_ini', 'ekor', fallback: '0 ekor'),
-        ),
+        _BannerStat('Mortalitas', value('mortalitas_hari_ini', 'ekor')),
       ],
       'maggot_bsf' => [
         _BannerStat('Limbah Masuk', value('volume_limbah_masuk_kg', 'kg')),
         _BannerStat(
           'Fase Larva',
-          value('fase_larva_hari', 'hari', fallback: '12 hari'),
+          value('fase_larva_hari', 'hari', fallback: 'Belum diisi'),
         ),
         _BannerStat('Est. Panen', value('estimasi_panen_kg', 'kg')),
       ],
@@ -569,19 +646,20 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
         _BannerStat('Survival Rate', value('kondisi_air', '%')),
         _BannerStat('Pakan/Hari', value('pakan_lele_kg', 'kg')),
       ],
-      _ => spec.stats,
+      _ => const [],
     };
   }
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 90),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
       child: Column(
         children: [
           _ModuleBanner(
             label: spec.bannerLabel,
-            desc: spec.bannerDesc,
+            desc: 'Catat hasil pengamatan aktual ${spec.label.toLowerCase()}.',
             icon: spec.icon,
             color: spec.color,
             stats: _bannerStats(),
@@ -613,7 +691,7 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
                                     type: field.type,
                                     suffix: field.suffix,
                                     maxLines: field.maxLines,
-                                    initialValue: field.initialValue,
+                                    initialValue: '',
                                     onChanged: (value) => setState(
                                       () => _values[field.key] = value,
                                     ),
@@ -626,7 +704,8 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
                             spec.slider != null)
                           _SliderInput(
                             spec: spec.slider!,
-                            value: _sliderValue ?? spec.slider!.initialValue,
+                            value: _sliderValue ?? spec.slider!.min,
+                            hasValue: _sliderValue != null,
                             onChanged: (value) {
                               setState(() => _sliderValue = value);
                               _values[spec.slider!.key] = value.toStringAsFixed(
@@ -635,13 +714,14 @@ abstract class _ModuleFormState<T extends StatefulWidget> extends State<T> {
                             },
                           ),
                         if (section == spec.sections.first &&
-                            spec.moduleType == 'maggot_bsf')
+                            spec.moduleType == 'maggot_bsf' &&
+                            _sliderValue != null)
                           _PhaseBadge(hari: (_sliderValue ?? 12).toInt()),
                       ],
                     ),
                   _buildSubmitRow(
                     onHistory: _openHistory,
-                    onSubmit: _submit,
+                    onSubmit: canSave ? _submit : null,
                     saving: _saving,
                   ),
                 ],
@@ -658,11 +738,13 @@ class _SliderInput extends StatelessWidget {
   const _SliderInput({
     required this.spec,
     required this.value,
+    required this.hasValue,
     required this.onChanged,
   });
 
   final _SliderSpec spec;
   final double value;
+  final bool hasValue;
   final ValueChanged<double> onChanged;
 
   @override
@@ -672,7 +754,7 @@ class _SliderInput extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
             children: [
               Text(
                 '${spec.label}: ',
@@ -682,7 +764,7 @@ class _SliderInput extends StatelessWidget {
                 ),
               ),
               Text(
-                '${value.toInt()} ${spec.unit}',
+                hasValue ? '${value.toInt()} ${spec.unit}' : 'Belum diisi',
                 style: TextStyle(
                   color: spec.color,
                   fontWeight: FontWeight.bold,
@@ -1123,6 +1205,7 @@ class _ModuleBanner extends StatelessWidget {
                       children: [
                         Text(
                           s.value,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -1156,10 +1239,8 @@ class _ModuleSpec {
     required this.title,
     required this.activityType,
     required this.bannerLabel,
-    required this.bannerDesc,
     required this.icon,
     required this.color,
-    required this.stats,
     required this.sections,
     required this.notesKey,
     this.quantityKey,
@@ -1172,10 +1253,8 @@ class _ModuleSpec {
   final String title;
   final String activityType;
   final String bannerLabel;
-  final String bannerDesc;
   final IconData icon;
   final Color color;
-  final List<_BannerStat> stats;
   final List<_FieldSection> sections;
   final String notesKey;
   final String? quantityKey;
@@ -1205,7 +1284,6 @@ class _FieldSpec {
     this.type = TextInputType.text,
     this.suffix,
     this.maxLines = 1,
-    this.initialValue,
   });
 
   final String key;
@@ -1214,7 +1292,6 @@ class _FieldSpec {
   final TextInputType type;
   final String? suffix;
   final int maxLines;
-  final String? initialValue;
 }
 
 class _SliderSpec {
@@ -1224,7 +1301,6 @@ class _SliderSpec {
     required this.unit,
     required this.min,
     required this.max,
-    required this.initialValue,
     required this.color,
   });
 
@@ -1233,7 +1309,6 @@ class _SliderSpec {
   final String unit;
   final double min;
   final double max;
-  final double initialValue;
   final Color color;
 }
 
@@ -1243,14 +1318,8 @@ const _ayamSpec = _ModuleSpec(
   title: 'Catatan Harian Modul Ayam',
   activityType: 'input_harian_ayam',
   bannerLabel: 'Modul Ayam',
-  bannerDesc: '150 ekor ayam kampung & petelur - Target 85+ telur/hari',
   icon: Icons.egg_alt_outlined,
   color: AppColors.warning,
-  stats: [
-    _BannerStat('Populasi', '150 ekor'),
-    _BannerStat('Produksi Kemarin', '88 butir'),
-    _BannerStat('Target Harian', '85 butir'),
-  ],
   quantityKey: 'produksi_telur_hari_ini',
   quantityUnit: 'butir',
   notesKey: 'catatan_kejadian_khusus',
@@ -1260,7 +1329,6 @@ const _ayamSpec = _ModuleSpec(
     unit: 'ekor',
     min: 0,
     max: 10,
-    initialValue: 0,
     color: AppColors.error,
   ),
   sections: [
@@ -1275,7 +1343,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'Jumlah ekor',
           type: TextInputType.number,
           suffix: 'ekor',
-          initialValue: '150',
         ),
         _FieldSpec(
           key: 'konsumsi_pakan_g_per_ekor',
@@ -1283,7 +1350,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'Gram per ekor per hari',
           type: TextInputType.number,
           suffix: 'g/ekor',
-          initialValue: '50',
         ),
         _FieldSpec(
           key: 'produksi_telur_hari_ini',
@@ -1291,7 +1357,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'Jumlah butir',
           type: TextInputType.number,
           suffix: 'butir',
-          initialValue: '85',
         ),
         _FieldSpec(
           key: 'berat_rata_rata_telur',
@@ -1299,7 +1364,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'Gram per butir',
           type: TextInputType.number,
           suffix: 'gram',
-          initialValue: '58',
         ),
         _FieldSpec(
           key: 'catatan_kejadian_khusus',
@@ -1320,7 +1384,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '5',
         ),
         _FieldSpec(
           key: 'talas_pepaya_kg',
@@ -1328,7 +1391,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '2',
         ),
         _FieldSpec(
           key: 'maggot_segar_kg',
@@ -1336,7 +1398,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '0.5',
         ),
         _FieldSpec(
           key: 'total_biaya_pakan',
@@ -1344,7 +1405,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'Rp',
           type: TextInputType.number,
           suffix: 'Rp',
-          initialValue: '15000',
         ),
       ],
     ),
@@ -1358,7 +1418,6 @@ const _ayamSpec = _ModuleSpec(
           label: 'Kondisi Kandang',
           hint: '1-10',
           type: TextInputType.number,
-          initialValue: '9',
         ),
         _FieldSpec(
           key: 'suhu_kandang',
@@ -1366,7 +1425,6 @@ const _ayamSpec = _ModuleSpec(
           hint: 'C',
           type: TextInputType.number,
           suffix: 'C',
-          initialValue: '27',
         ),
         _FieldSpec(
           key: 'gejala_penyakit',
@@ -1385,14 +1443,8 @@ const _maggotSpec = _ModuleSpec(
   title: 'Catatan Harian Modul Maggot',
   activityType: 'input_harian_maggot',
   bannerLabel: 'Modul Maggot BSF',
-  bannerDesc: 'Black Soldier Fly - Batch aktif 5 rak - Siklus 14 hari',
   icon: Icons.bug_report_outlined,
   color: AppColors.accentLightGreen,
-  stats: [
-    _BannerStat('Limbah Masuk', '50 kg/minggu'),
-    _BannerStat('Batch Aktif', 'Hari ke-12'),
-    _BannerStat('Est. Panen', '18-20 kg'),
-  ],
   quantityKey: 'volume_limbah_masuk_kg',
   quantityUnit: 'kg',
   notesKey: 'catatan_perawatan',
@@ -1402,7 +1454,6 @@ const _maggotSpec = _ModuleSpec(
     unit: '/14',
     min: 1,
     max: 14,
-    initialValue: 12,
     color: AppColors.accentLightGreen,
   ),
   sections: [
@@ -1417,13 +1468,11 @@ const _maggotSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '12',
         ),
         _FieldSpec(
           key: 'jenis_limbah_utama',
           label: 'Jenis Limbah Utama',
           hint: 'sisa nasi, sayur, dll.',
-          initialValue: 'Sisa makanan dapur',
         ),
         _FieldSpec(
           key: 'kadar_air_limbah_persen',
@@ -1431,13 +1480,11 @@ const _maggotSpec = _ModuleSpec(
           hint: '% estimasi',
           type: TextInputType.number,
           suffix: '%',
-          initialValue: '75',
         ),
         _FieldSpec(
           key: 'asal_limbah',
           label: 'Asal Limbah',
           hint: 'RT / warung / pasar',
-          initialValue: 'Rumah tangga sekitar',
         ),
       ],
     ),
@@ -1452,7 +1499,6 @@ const _maggotSpec = _ModuleSpec(
           hint: 'C',
           type: TextInputType.number,
           suffix: 'C',
-          initialValue: '30',
         ),
         _FieldSpec(
           key: 'kelembapan_media',
@@ -1460,7 +1506,6 @@ const _maggotSpec = _ModuleSpec(
           hint: 'unit',
           type: TextInputType.number,
           suffix: 'rak',
-          initialValue: '5',
         ),
       ],
     ),
@@ -1475,7 +1520,6 @@ const _maggotSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '18',
         ),
         _FieldSpec(
           key: 'target_panen_larva_kg',
@@ -1483,7 +1527,6 @@ const _maggotSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '20',
         ),
         _FieldSpec(
           key: 'panen_prepupa_kering_kg',
@@ -1491,7 +1534,6 @@ const _maggotSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '0',
         ),
         _FieldSpec(
           key: 'alokasi_larva_lele_persen',
@@ -1499,13 +1541,11 @@ const _maggotSpec = _ModuleSpec(
           hint: '%',
           type: TextInputType.number,
           suffix: '% lele',
-          initialValue: '80',
         ),
         _FieldSpec(
           key: 'kondisi_media',
           label: 'Kondisi Media',
           hint: 'kering, basah, stabil...',
-          initialValue: 'Stabil',
         ),
         _FieldSpec(
           key: 'catatan_perawatan',
@@ -1524,14 +1564,8 @@ const _cacingSpec = _ModuleSpec(
   title: 'Catatan Harian Modul Cacing',
   activityType: 'input_harian_cacing',
   bannerLabel: 'Modul Cacing Tanah (ANC)',
-  bannerDesc: '10 kg bibit cacing - Kelembaban 70% - Pakan 3x/minggu',
   icon: Icons.grass_outlined,
   color: AppColors.primaryGreenDark,
-  stats: [
-    _BannerStat('Bibit', '10 kg'),
-    _BannerStat('Kelembaban', '70%'),
-    _BannerStat('Est. Kascing', '320 kg/bln'),
-  ],
   quantityKey: 'pakan_organik_kg',
   quantityUnit: 'kg',
   notesKey: 'catatan_perawatan',
@@ -1547,7 +1581,6 @@ const _cacingSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '10',
         ),
         _FieldSpec(
           key: 'kelembapan_media_persen',
@@ -1555,7 +1588,6 @@ const _cacingSpec = _ModuleSpec(
           hint: '%',
           type: TextInputType.number,
           suffix: '%',
-          initialValue: '70',
         ),
         _FieldSpec(
           key: 'pakan_organik_kg',
@@ -1563,13 +1595,11 @@ const _cacingSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '2',
         ),
         _FieldSpec(
           key: 'kondisi_media',
           label: 'Jenis Pakan',
           hint: 'Limbah organik, kotoran...',
-          initialValue: 'Limbah dapur + kotoran ayam',
         ),
         _FieldSpec(
           key: 'panen_kascing_kg',
@@ -1609,14 +1639,8 @@ const _tanamanSpec = _ModuleSpec(
   title: 'Catatan Harian Modul Tanaman',
   activityType: 'input_harian_tanaman',
   bannerLabel: 'Modul Tanaman Pangan Organik',
-  bannerDesc: 'Talas - Singkong - Kacang Panjang - Pepaya - 500 m2 lahan',
   icon: Icons.eco_outlined,
   color: AppColors.success,
-  stats: [
-    _BannerStat('Komoditas', '4 jenis'),
-    _BannerStat('Luas Lahan', '+/-200 m2'),
-    _BannerStat('Pupuk', 'Kascing mandiri'),
-  ],
   quantityKey: 'pupuk_kascing_cair_liter',
   quantityUnit: 'L/m2',
   notesKey: 'catatan_kondisi_tanaman',
@@ -1630,19 +1654,16 @@ const _tanamanSpec = _ModuleSpec(
           key: 'jenis_tanaman',
           label: 'Jenis Tanaman',
           hint: 'Talas, singkong, dll.',
-          initialValue: 'Talas Paya',
         ),
         _FieldSpec(
           key: 'blok_lokasi',
           label: 'Blok / Lokasi',
           hint: 'Blok A, B, C...',
-          initialValue: 'Blok A',
         ),
         _FieldSpec(
           key: 'tanggal_tanam',
           label: 'Tanggal Tanam',
           hint: 'DD/MM/YYYY',
-          initialValue: '01/01/2026',
         ),
         _FieldSpec(
           key: 'usia_tanaman',
@@ -1650,7 +1671,6 @@ const _tanamanSpec = _ModuleSpec(
           hint: 'hari',
           type: TextInputType.number,
           suffix: 'hari',
-          initialValue: '52',
         ),
         _FieldSpec(
           key: 'tinggi_tanaman_cm',
@@ -1658,7 +1678,6 @@ const _tanamanSpec = _ModuleSpec(
           hint: 'cm',
           type: TextInputType.number,
           suffix: 'cm',
-          initialValue: '85',
         ),
         _FieldSpec(
           key: 'jumlah_daun',
@@ -1666,7 +1685,6 @@ const _tanamanSpec = _ModuleSpec(
           hint: 'lembar',
           type: TextInputType.number,
           suffix: 'lbr',
-          initialValue: '12',
         ),
         _FieldSpec(
           key: 'pupuk_kascing_cair_liter',
@@ -1674,7 +1692,6 @@ const _tanamanSpec = _ModuleSpec(
           hint: 'L',
           type: TextInputType.number,
           suffix: 'L/m2',
-          initialValue: '2',
         ),
         _FieldSpec(
           key: 'pupuk_kascing_kg',
@@ -1694,7 +1711,6 @@ const _tanamanSpec = _ModuleSpec(
           key: 'jadwal_pemupukan_berikutnya',
           label: 'Jadwal Pemupukan Berikutnya',
           hint: 'DD/MM/YYYY',
-          initialValue: '28/02/2026',
         ),
         _FieldSpec(
           key: 'catatan_kondisi_tanaman',
@@ -1713,14 +1729,8 @@ const _leleSpec = _ModuleSpec(
   title: 'Catatan Harian Modul Lele',
   activityType: 'input_harian_lele',
   bannerLabel: 'Modul Lele Organik',
-  bannerDesc: '800 ekor tebar - Pakan maggot - Kolam bioflok - SR 89%',
   icon: Icons.water_drop_outlined,
   color: AppColors.info,
-  stats: [
-    _BannerStat('Tebar Benih', '800 ekor'),
-    _BannerStat('Survival Rate', '89%'),
-    _BannerStat('Pakan/Hari', '5 kg maggot'),
-  ],
   quantityKey: 'pakan_lele_kg',
   quantityUnit: 'kg',
   notesKey: 'catatan_kolam',
@@ -1736,7 +1746,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'ekor',
           type: TextInputType.number,
           suffix: 'ekor',
-          initialValue: '800',
         ),
         _FieldSpec(
           key: 'kondisi_air',
@@ -1744,7 +1753,6 @@ const _leleSpec = _ModuleSpec(
           hint: '%',
           type: TextInputType.number,
           suffix: '%',
-          initialValue: '89',
         ),
         _FieldSpec(
           key: 'pakan_maggot_pagi_kg',
@@ -1752,7 +1760,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '2.5',
         ),
         _FieldSpec(
           key: 'pakan_lele_kg',
@@ -1760,7 +1767,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'kg',
           type: TextInputType.number,
           suffix: 'kg',
-          initialValue: '2.5',
         ),
         _FieldSpec(
           key: 'ph_air',
@@ -1768,7 +1774,6 @@ const _leleSpec = _ModuleSpec(
           hint: '6.5-8.0 ideal',
           type: TextInputType.numberWithOptions(decimal: true),
           suffix: 'pH',
-          initialValue: '7.2',
         ),
         _FieldSpec(
           key: 'suhu_air',
@@ -1776,7 +1781,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'C',
           type: TextInputType.number,
           suffix: 'C',
-          initialValue: '28',
         ),
         _FieldSpec(
           key: 'mortalitas_ikan',
@@ -1784,7 +1788,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'gram/ekor',
           type: TextInputType.number,
           suffix: 'g',
-          initialValue: '150',
         ),
         _FieldSpec(
           key: 'estimasi_panen_hari',
@@ -1792,7 +1795,6 @@ const _leleSpec = _ModuleSpec(
           hint: 'hari lagi',
           type: TextInputType.number,
           suffix: 'hari',
-          initialValue: '30',
         ),
         _FieldSpec(
           key: 'panen_lele_kg',

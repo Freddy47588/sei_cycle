@@ -50,7 +50,7 @@ class AppUser {
   bool get canManageSchedules => isAdmin || isOperatorLapangan;
   bool get canDeleteSchedules => isAdmin;
 
-  bool get canViewFinance => isActive;
+  bool get canViewFinance => isActive && (isAdmin || isOperatorKeuangan);
   bool get canManageFinance => isAdmin || isOperatorKeuangan;
   bool get canDeleteFinance => isAdmin || isOperatorKeuangan;
   bool get canViewFinanceDashboard => canViewFinance;

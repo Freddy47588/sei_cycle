@@ -12,7 +12,8 @@ import '../models/education_content.dart';
 import '../services/education_service.dart';
 
 class EducationScreen extends StatefulWidget {
-  const EducationScreen({required this.profile, super.key});
+  const EducationScreen({required this.profile, this.contents, super.key});
+  final Stream<List<EducationContent>>? contents;
 
   final AppUser profile;
 
@@ -21,7 +22,7 @@ class EducationScreen extends StatefulWidget {
 }
 
 class _EducationScreenState extends State<EducationScreen> {
-  late final EducationService _service;
+  late final EducationService _service = EducationService();
   String _query = '';
   String? _type;
   String? _moduleType;
@@ -29,7 +30,6 @@ class _EducationScreenState extends State<EducationScreen> {
   @override
   void initState() {
     super.initState();
-    _service = EducationService();
   }
 
   Future<void> _openForm([EducationContent? content]) async {
@@ -72,134 +72,144 @@ class _EducationScreenState extends State<EducationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FeaturePage(
-      title: 'Edukasi Kebun Sei',
-      subtitle: 'Artikel, tutorial, dan SOP praktis untuk tim kebun',
-      actions: [
-        if (widget.profile.canManageEducation)
-          FilledButton.icon(
-            onPressed: _openForm,
-            icon: const Icon(Icons.add),
-            label: const Text('Tambah konten'),
-          ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            onChanged: (value) => setState(() => _query = value),
-            decoration: const InputDecoration(
-              hintText: 'Cari artikel atau tutorial...',
-              prefixIcon: Icon(Icons.search),
+    return LayoutBuilder(
+      builder: (context, pageConstraints) => FeaturePage(
+        title: 'Edukasi Kebun Sei',
+        subtitle: 'Artikel, tutorial, dan SOP praktis untuk tim kebun',
+        actions: [
+          if (widget.profile.canManageEducation)
+            FilledButton.icon(
+              onPressed: _openForm,
+              icon: const Icon(Icons.add),
+              label: const Text('Tambah konten'),
             ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 36,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: AppFilterChip(
-                    selected: _type == null && _moduleType == null,
-                    label: 'Semua',
-                    icon: Icons.school_outlined,
-                    color: AppColors.primaryGreen,
-                    onSelected: () => setState(() {
-                      _type = null;
-                      _moduleType = null;
-                    }),
-                  ),
-                ),
-                for (final type in EducationType.values)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: AppFilterChip(
-                      selected: _type == type,
-                      label: _educationTypeLabel(type),
-                      icon: _iconForType(type),
-                      color: _colorForType(type),
-                      onSelected: () => setState(() => _type = type),
-                    ),
-                  ),
-                for (final module in FarmModules.values)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: AppFilterChip(
-                      selected: _moduleType == module.id,
-                      label: module.name,
-                      icon: _moduleIcon(module.id),
-                      color: _moduleColor(module.id),
-                      onSelected: () => setState(() => _moduleType = module.id),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          Expanded(
-            child: StreamBuilder<List<EducationContent>>(
-              stream: _service.watchContents(
-                includeDrafts: widget.profile.canManageEducation,
-                type: _type,
-                moduleType: _moduleType,
-              ),
-              builder: (context, snapshot) {
-                final state = asyncSnapshotState(snapshot);
-                if (state != null) return state;
-                final query = _query.toLowerCase();
-                final contents = snapshot.requireData.where((item) {
-                  final matchesQuery =
-                      query.isEmpty ||
-                      item.title.toLowerCase().contains(query) ||
-                      item.previewText.toLowerCase().contains(query);
-                  return matchesQuery;
-                }).toList();
-                if (contents.isEmpty) {
-                  return EmptyState(
-                    title:
-                        _query.isEmpty && _type == null && _moduleType == null
-                        ? 'Belum ada materi edukasi'
-                        : 'Materi tidak ditemukan',
-                    message: _query.isEmpty
-                        ? 'Panduan akan muncul setelah admin menerbitkan konten pertama.'
-                        : 'Coba gunakan kata kunci lain atau ubah filter pencarian.',
-                    icon: Icons.school_outlined,
-                  );
-                }
-                return LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 900
-                        ? 3
-                        : constraints.maxWidth >= 580
-                        ? 2
-                        : 1;
-                    return GridView.builder(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                        mainAxisExtent: 274,
-                      ),
-                      itemCount: contents.length,
-                      itemBuilder: (context, index) {
-                        return _EducationCard(
-                          content: contents[index],
-                          canEdit: widget.profile.canManageEducation,
-                          canDelete: widget.profile.canDeleteEducation,
-                          onEdit: () => _openForm(contents[index]),
-                          onDelete: () => _delete(contents[index]),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-            ),
-          ),
         ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              onChanged: (value) => setState(() => _query = value),
+              decoration: const InputDecoration(
+                hintText: 'Cari artikel atau tutorial...',
+                prefixIcon: Icon(Icons.search, color: AppColors.primaryGreen),
+                fillColor: AppColors.surface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AppFilterChip(
+                      selected: _type == null && _moduleType == null,
+                      label: 'Semua',
+                      icon: Icons.school_outlined,
+                      color: AppColors.primaryGreen,
+                      onSelected: () => setState(() {
+                        _type = null;
+                        _moduleType = null;
+                      }),
+                    ),
+                  ),
+                  for (final module in FarmModules.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AppFilterChip(
+                        selected: _moduleType == module.id,
+                        label: module.name,
+                        icon: _moduleIcon(module.id),
+                        color: _moduleColor(module.id),
+                        onSelected: () =>
+                            setState(() => _moduleType = module.id),
+                      ),
+                    ),
+                  for (final type in EducationType.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AppFilterChip(
+                        selected: _type == type,
+                        label: _educationTypeLabel(type),
+                        icon: _iconForType(type),
+                        color: _colorForType(type),
+                        onSelected: () => setState(() => _type = type),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: StreamBuilder<List<EducationContent>>(
+                stream:
+                    widget.contents ??
+                    _service.watchContents(
+                      includeDrafts: widget.profile.canManageEducation,
+                      type: _type,
+                      moduleType: _moduleType,
+                    ),
+                builder: (context, snapshot) {
+                  final state = asyncSnapshotState(snapshot);
+                  if (state != null) return state;
+                  final query = _query.trim().toLowerCase();
+                  final contents = snapshot.requireData.where((item) {
+                    final matchesQuery =
+                        query.isEmpty ||
+                        item.title.toLowerCase().contains(query) ||
+                        item.previewText.toLowerCase().contains(query);
+                    return matchesQuery;
+                  }).toList();
+                  if (contents.isEmpty) {
+                    return EmptyState(
+                      title:
+                          _query.isEmpty && _type == null && _moduleType == null
+                          ? 'Belum ada materi edukasi'
+                          : 'Materi tidak ditemukan',
+                      message: _query.isEmpty
+                          ? 'Panduan akan muncul setelah admin menerbitkan konten pertama.'
+                          : 'Coba gunakan kata kunci lain atau ubah filter pencarian.',
+                      icon: Icons.school_outlined,
+                    );
+                  }
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 900
+                          ? 3
+                          : pageConstraints.maxWidth >=
+                                AppBreakpoints.formColumns
+                          ? 2
+                          : 1;
+                      return GridView.builder(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 20,
+                          mainAxisSpacing: 20,
+                          mainAxisExtent:
+                              360 +
+                              (MediaQuery.textScalerOf(context).scale(1) - 1) *
+                                  160,
+                        ),
+                        itemCount: contents.length,
+                        itemBuilder: (context, index) {
+                          return _EducationCard(
+                            content: contents[index],
+                            canEdit: widget.profile.canManageEducation,
+                            canDelete: widget.profile.canDeleteEducation,
+                            onEdit: () => _openForm(contents[index]),
+                            onDelete: () => _delete(contents[index]),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -229,7 +239,7 @@ class _EducationCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 100,
+            height: 150,
             width: double.infinity,
             child: Stack(
               fit: StackFit.expand,
@@ -375,7 +385,20 @@ class _EducationImage extends StatelessWidget {
       return Image.network(
         content.thumbnailUrl,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => Image.asset(fallback, fit: BoxFit.cover),
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : const ColoredBox(
+                color: AppColors.surfaceVariant,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+        errorBuilder: (_, _, _) => Image.asset(
+          fallback,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const Icon(
+            Icons.image_not_supported_outlined,
+            color: AppColors.textMuted,
+          ),
+        ),
       );
     }
     return Image.asset(fallback, fit: BoxFit.cover);

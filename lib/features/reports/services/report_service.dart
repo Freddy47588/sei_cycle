@@ -9,7 +9,10 @@ import '../models/report_filter.dart';
 class ReportService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<AnalyticsModel> generateReport(ReportFilter filter) async {
+  Future<AnalyticsModel> generateReport(
+    ReportFilter filter, {
+    bool includeFinance = true,
+  }) async {
     final startDate = Timestamp.fromDate(filter.startDate);
     final endDate = Timestamp.fromDate(filter.endDate);
 
@@ -52,8 +55,9 @@ class ReportService {
     }
 
     // Fetch Finance
-    if (filter.reportType == ReportType.fullSummary ||
-        filter.reportType == ReportType.finance) {
+    if (includeFinance &&
+        (filter.reportType == ReportType.fullSummary ||
+            filter.reportType == ReportType.finance)) {
       final financeSnapshot = await _firestore
           .collection('finance_transactions')
           .where('isDeleted', isEqualTo: false)

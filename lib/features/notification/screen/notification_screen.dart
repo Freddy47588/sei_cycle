@@ -12,7 +12,12 @@ import '../models/app_notification.dart';
 import '../services/notification_service.dart';
 
 class NotificationScreen extends StatefulWidget {
-  const NotificationScreen({required this.profile, super.key});
+  const NotificationScreen({
+    required this.profile,
+    this.notifications,
+    super.key,
+  });
+  final Stream<List<AppNotification>>? notifications;
 
   final AppUser profile;
 
@@ -21,13 +26,12 @@ class NotificationScreen extends StatefulWidget {
 }
 
 class _NotificationScreenState extends State<NotificationScreen> {
-  late final NotificationService _service;
+  late final NotificationService _service = NotificationService();
   String? _type;
 
   @override
   void initState() {
     super.initState();
-    _service = NotificationService();
   }
 
   Future<void> _markAsRead(AppNotification notification) async {
@@ -101,11 +105,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
           const SizedBox(height: 14),
           Expanded(
             child: StreamBuilder<List<AppNotification>>(
-              stream: _service.watchNotifications(
-                userId: widget.profile.uid,
-                role: widget.profile.effectiveRole,
-                type: _type,
-              ),
+              stream:
+                  widget.notifications ??
+                  _service.watchNotifications(
+                    userId: widget.profile.uid,
+                    role: widget.profile.effectiveRole,
+                    type: _type,
+                  ),
               builder: (context, snapshot) {
                 final state = asyncSnapshotState(snapshot);
                 if (state != null) return state;
@@ -169,7 +175,7 @@ const _notificationFilters = [
   ),
   _NotificationFilter(
     type: 'schedule_overdue',
-    label: 'Produksi',
+    label: 'Jadwal Terlewat',
     icon: Icons.warning_amber_rounded,
     color: AppColors.warning,
   ),
@@ -260,10 +266,12 @@ class _NotificationCard extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
-              child: AppIconBox(
-                icon: _typeIcon(notification.type),
-                color: color,
-                size: 38,
+              child: Center(
+                child: AppIconBox(
+                  icon: _typeIcon(notification.type),
+                  color: color,
+                  size: 44,
+                ),
               ),
             ),
             Expanded(
@@ -312,7 +320,15 @@ class _NotificationCard extends StatelessWidget {
             ),
             Center(
               child: onMarkRead == null
-                  ? const SizedBox(width: 8)
+                  ? const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.done_all_rounded,
+                        size: 18,
+                        color: AppColors.textMuted,
+                        semanticLabel: 'Sudah dibaca',
+                      ),
+                    )
                   : IconButton(
                       onPressed: onMarkRead,
                       icon: const Icon(Icons.check_circle_rounded),
@@ -351,7 +367,7 @@ IconData _typeIcon(String type) => switch (type) {
 
 String _typeLabel(String type) => switch (type) {
   'low_stock' => 'Stok rendah',
-  'schedule_overdue' => 'Produksi',
+  'schedule_overdue' => 'Jadwal terlewat',
   'production_reminder' => 'Jadwal pakan',
   _ => 'Alert sistem',
 };

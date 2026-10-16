@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../theme/app_theme.dart';
+import '../../../core/widgets/async_state_widgets.dart';
 import '../../profile/models/app_user.dart';
 import '../models/dashboard_summary.dart';
 import '../services/dashboard_service.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({required this.profile, super.key});
+  const DashboardScreen({required this.profile, this.summaryLoader, super.key});
+
+  final Future<DashboardSummary> Function({required bool includeFinance})?
+  summaryLoader;
 
   final AppUser profile;
 
@@ -16,24 +20,29 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late final DashboardService _service;
+  late final Future<DashboardSummary> Function({required bool includeFinance})
+  _load;
   late Future<DashboardSummary> _summaryFuture;
 
   @override
   void initState() {
     super.initState();
-    _service = DashboardService();
-    _summaryFuture = _service.getDashboardSummary(
+    _load = widget.summaryLoader ?? DashboardService().getDashboardSummary;
+    _summaryFuture = _load(
       includeFinance: widget.profile.canViewFinanceDashboard,
     );
   }
 
-  void _reload() {
-    setState(() {
-      _summaryFuture = _service.getDashboardSummary(
-        includeFinance: widget.profile.canViewFinanceDashboard,
-      );
-    });
+  Future<void> _reload() async {
+    final future = _load(
+      includeFinance: widget.profile.canViewFinanceDashboard,
+    );
+    setState(() => _summaryFuture = future);
+    try {
+      await future;
+    } catch (_) {
+      // FutureBuilder renders the error and retry action.
+    }
   }
 
   @override
@@ -41,10 +50,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return FutureBuilder<DashboardSummary>(
       future: _summaryFuture,
       builder: (context, snapshot) {
-        final summary = snapshot.data ?? _fallbackSummary;
+        final summary = snapshot.data;
         final loading = snapshot.connectionState != ConnectionState.done;
         return RefreshIndicator(
-          onRefresh: () async => _reload(),
+          onRefresh: _reload,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(20),
@@ -56,34 +65,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 SectionHeader(
                   title: 'Ringkasan Operasional',
                   subtitle: loading
-                      ? 'Mengambil data Firestore hari ini...'
-                      : 'Data real-time Kebun Sei hari ini',
+                      ? 'Mengambil data operasional hari ini...'
+                      : snapshot.hasError
+                      ? 'Data belum berhasil dimuat'
+                      : 'Ringkasan catatan Kebun Sei hari ini',
                   trailing: _HeaderLiveBadge(
-                    label: snapshot.hasError ? 'Fallback' : 'Live',
-                    color: snapshot.hasError
-                        ? AppColors.warning
-                        : AppColors.success,
+                    label: loading
+                        ? 'Memuat'
+                        : snapshot.hasError
+                        ? 'Gagal'
+                        : 'Dimuat',
+                    color: loading
+                        ? AppColors.textMuted
+                        : snapshot.hasError
+                        ? AppColors.error
+                        : AppColors.primaryGreen,
                   ),
                 ),
-                _StatsGrid(summary: summary),
-                const SizedBox(height: 28),
-                const SectionHeader(
-                  title: 'Sistem Aliran Nutrisi',
-                  subtitle:
-                      'Siklus tertutup Kebun Sei - zero waste integrated farming',
-                ),
-                NutrientFlowCard(flows: summary.circularFlows),
-                const SizedBox(height: 28),
-                SectionHeader(
-                  title: 'Aktivitas Hari Ini',
-                  subtitle: DateFormat(
-                    'EEEE, d MMMM yyyy',
-                    'id_ID',
-                  ).format(DateTime.now()),
-                ),
-                _ActivityTimeline(activities: summary.recentActivities),
-                const SizedBox(height: 28),
-                _RevenueCard(summary: summary),
+                if (loading)
+                  const LoadingState(label: 'Memuat ringkasan...')
+                else if (snapshot.hasError)
+                  ErrorState(
+                    message:
+                        'Ringkasan belum tersedia. Periksa koneksi dan hak akses.',
+                    onRetry: _reload,
+                  )
+                else if (summary != null) ...[
+                  _StatsGrid(summary: summary),
+                  const SizedBox(height: 28),
+                  const SectionHeader(
+                    title: 'Sistem Aliran Nutrisi',
+                    subtitle:
+                        'Siklus tertutup Kebun Sei - zero waste integrated farming',
+                  ),
+                  NutrientFlowCard(flows: summary.circularFlows),
+                  const SizedBox(height: 28),
+                  SectionHeader(
+                    title: 'Aktivitas Hari Ini',
+                    subtitle: DateFormat(
+                      'EEEE, d MMMM yyyy',
+                      'id_ID',
+                    ).format(DateTime.now()),
+                  ),
+                  if (summary.recentActivities.isEmpty)
+                    const EmptyState(
+                      title: 'Belum ada aktivitas hari ini',
+                      message:
+                          'Catatan logbook dan jadwal akan muncul setelah tersedia.',
+                      icon: Icons.event_note_outlined,
+                    )
+                  else
+                    _ActivityTimeline(activities: summary.recentActivities),
+                  if (widget.profile.canViewFinanceDashboard &&
+                      summary.financeVisible) ...[
+                    const SizedBox(height: 28),
+                    _RevenueCard(summary: summary),
+                  ],
+                ],
                 const SizedBox(height: 20),
               ],
             ),
@@ -97,6 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 class _WelcomeHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final logoSize = MediaQuery.sizeOf(context).width < 400 ? 60.0 : 80.0;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -167,8 +206,8 @@ class _WelcomeHeader extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           Container(
-            width: 80,
-            height: 80,
+            width: logoSize,
+            height: logoSize,
             decoration: const BoxDecoration(
               color: Colors.white,
               shape: BoxShape.circle,
@@ -209,12 +248,14 @@ class _HeaderBadge extends StatelessWidget {
         children: [
           Icon(icon, color: Colors.white, size: 13),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ],
@@ -236,6 +277,7 @@ class _HeaderLiveBadge extends StatelessWidget {
       avatar: Icon(Icons.circle, color: color, size: 10),
       backgroundColor: color.withValues(alpha: 0.1),
       labelStyle: TextStyle(
+        fontFamily: AppTypography.family,
         color: color,
         fontSize: 12,
         fontWeight: FontWeight.w600,
@@ -304,7 +346,7 @@ class _StatsGrid extends StatelessWidget {
       _StatData(
         title: 'Modul Aktif',
         value: '${summary.activeModuleCount}',
-        helper: 'farm_modules aktif',
+        helper: 'modul budidaya aktif',
         icon: Icons.hub_outlined,
         color: AppColors.primaryGreen,
       ),
@@ -333,19 +375,20 @@ class _StatsGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth >= 900 ? 4 : 2;
-        final childAspectRatio = constraints.maxWidth >= 900
-            ? 1.05
-            : (constraints.maxWidth >= 600 ? 1.1 : 0.95);
-
+        final columns = constraints.maxWidth >= 900
+            ? 4
+            : constraints.maxWidth < 340
+            ? 1
+            : 2;
+        final scale = MediaQuery.textScalerOf(context).scale(1);
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: childAspectRatio,
+            crossAxisCount: columns,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            mainAxisExtent: 170 + (scale - 1) * 100,
           ),
           itemCount: stats.length,
           itemBuilder: (context, i) => _StatCard(data: stats[i]),
@@ -435,7 +478,7 @@ class NutrientFlowCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final nodes = _flowNodes(flows);
     final description = flows.isEmpty
-        ? 'Setiap limbah menjadi sumber daya baru: kotoran dan sisa organik diolah maggot/cacing, lalu kembali menjadi pakan, kascing, dan nutrisi tanaman.'
+        ? 'Ilustrasi siklus nutrisi; belum ada catatan aliran. Setiap limbah menjadi sumber daya baru: kotoran dan sisa organik diolah maggot/cacing, lalu kembali menjadi pakan, kascing, dan nutrisi tanaman.'
         : flows.map((flow) => '${flow.materialName}: ${flow.notes}').join(' ');
 
     return Card(
@@ -444,6 +487,13 @@ class NutrientFlowCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              'Aliran Nutrisi – Sistem Sirkular Tertutup',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(color: AppColors.primaryGreen),
+            ),
+            const SizedBox(height: 16),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -479,16 +529,24 @@ class NutrientFlowCard extends StatelessWidget {
 List<_FlowNode> _flowNodes(List<DashboardCircularFlow> flows) {
   if (flows.isEmpty) {
     return const [
-      _FlowNode('Ayam', Icons.egg_alt_outlined, AppColors.warning),
-      _FlowNode('Limbah', Icons.recycling_outlined, AppColors.accentBrown),
       _FlowNode(
-        'Maggot',
+        'Limbah Dapur',
+        Icons.recycling_outlined,
+        AppColors.accentBrown,
+      ),
+      _FlowNode(
+        'Maggot BSF',
         Icons.bug_report_outlined,
         AppColors.accentLightGreen,
       ),
-      _FlowNode('Cacing', Icons.grass_outlined, AppColors.primaryGreen),
-      _FlowNode('Lele', Icons.water_drop_outlined, AppColors.info),
-      _FlowNode('Tanaman', Icons.eco_outlined, AppColors.success),
+      _FlowNode('Pakan Lele', Icons.set_meal_outlined, AppColors.info),
+      _FlowNode('Air Kolam', Icons.water_drop_outlined, Color(0xFF06B6D4)),
+      _FlowNode(
+        'Cacing & Kascing',
+        Icons.grass_outlined,
+        AppColors.primaryGreen,
+      ),
+      _FlowNode('Tanaman Pangan', Icons.eco_outlined, AppColors.success),
     ];
   }
 
@@ -709,9 +767,7 @@ class _RevenueCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final total = summary.financeVisible && summary.hasFinanceData
-        ? summary.monthlyIncome
-        : 20000000.0;
+    final total = summary.monthlyIncome;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -739,7 +795,7 @@ class _RevenueCard extends StatelessWidget {
             Text(
               summary.financeVisible && summary.hasFinanceData
                   ? 'Pengeluaran ${_money(summary.monthlyExpense)} - laba/rugi ${_money(summary.monthlyProfit)}'
-                  : 'Proyeksi periode Juni-Agustus 2025: Rp 96 jt',
+                  : 'Belum ada transaksi keuangan bulan ini.',
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
@@ -810,21 +866,6 @@ class _RevenueRow extends StatelessWidget {
     );
   }
 }
-
-final _fallbackSummary = DashboardSummary(
-  activeModuleCount: 5,
-  todayLogCount: 0,
-  todayScheduleCount: 0,
-  lowStockCount: 0,
-  monthlyIncome: 0,
-  monthlyExpense: 0,
-  monthlyProfit: 0,
-  recentActivities: fallbackActivities,
-  revenueItems: fallbackRevenueItems,
-  circularFlows: fallbackCircularFlows,
-  lowStockPreview: const [],
-  financeVisible: false,
-);
 
 String _money(double value) {
   final abs = value.abs();

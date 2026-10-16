@@ -16,7 +16,15 @@ import '../features/schedule/screen/schedule_screen.dart';
 import '../theme/app_theme.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({required this.profile, super.key});
+  const AppShell({
+    required this.profile,
+    this.unreadCountStream,
+    this.pageBuilder,
+    super.key,
+  });
+
+  final Stream<int>? unreadCountStream;
+  final Widget Function(String destination)? pageBuilder;
 
   final AppUser profile;
 
@@ -31,10 +39,12 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    _unreadCountStream = NotificationService().watchUnreadCount(
-      userId: widget.profile.uid,
-      role: widget.profile.effectiveRole,
-    );
+    _unreadCountStream =
+        widget.unreadCountStream ??
+        NotificationService().watchUnreadCount(
+          userId: widget.profile.uid,
+          role: widget.profile.effectiveRole,
+        );
   }
 
   List<_Destination> get _destinations => <_Destination>[
@@ -124,8 +134,10 @@ class _AppShellState extends State<AppShell> {
         final unreadCount = snapshot.data ?? 0;
         return LayoutBuilder(
           builder: (context, constraints) {
-            final content = destinations[_selectedIndex].builder();
-            if (constraints.maxWidth >= 900) {
+            final content =
+                widget.pageBuilder?.call(destinations[_selectedIndex].label) ??
+                destinations[_selectedIndex].builder();
+            if (constraints.maxWidth >= AppBreakpoints.desktop) {
               return _DesktopShell(
                 profile: widget.profile,
                 destinations: destinations,
@@ -407,26 +419,28 @@ class _DesktopShell extends StatelessWidget {
                         children: [
                           _BrandLogo(size: 44),
                           SizedBox(width: 12),
-                          Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'SeiCycle',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'SeiCycle',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                'Operasional Kebun Sei',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 10,
+                                Text(
+                                  'Operasional Kebun Sei',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 10,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -452,42 +466,63 @@ class _DesktopShell extends StatelessWidget {
                           final selected = index == selectedIndex;
                           final showBadge =
                               destination.isBadged && unreadCount > 0;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: ListTile(
-                              selected: selected,
-                              selectedColor: AppColors.primaryGreen,
-                              selectedTileColor: AppColors.softGreen,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(11),
-                              ),
-                              leading: showBadge
-                                  ? Badge.count(
-                                      count: unreadCount,
-                                      child: Icon(
-                                        selected
-                                            ? destination.selectedIcon
-                                            : destination.icon,
-                                        size: 21,
-                                      ),
-                                    )
-                                  : Icon(
-                                      selected
-                                          ? destination.selectedIcon
-                                          : destination.icon,
-                                      size: 21,
+                          final firstSecondary = destinations.indexWhere(
+                            (item) => item.label == 'Inventaris',
+                          );
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (index == firstSecondary)
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(8, 20, 8, 8),
+                                  child: Text(
+                                    'LAINNYA',
+                                    style: TextStyle(
+                                      color: AppColors.textMuted,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 1.1,
                                     ),
-                              title: Text(
-                                destination.label,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: selected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
+                                  ),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: ListTile(
+                                  selected: selected,
+                                  selectedColor: AppColors.primaryGreen,
+                                  selectedTileColor: AppColors.softGreen,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(11),
+                                  ),
+                                  leading: showBadge
+                                      ? Badge.count(
+                                          count: unreadCount,
+                                          child: Icon(
+                                            selected
+                                                ? destination.selectedIcon
+                                                : destination.icon,
+                                            size: 21,
+                                          ),
+                                        )
+                                      : Icon(
+                                          selected
+                                              ? destination.selectedIcon
+                                              : destination.icon,
+                                          size: 21,
+                                        ),
+                                  title: Text(
+                                    destination.label,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: selected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                  onTap: () => onSelected(index),
                                 ),
                               ),
-                              onTap: () => onSelected(index),
-                            ),
+                            ],
                           );
                         },
                       ),
@@ -554,34 +589,35 @@ class _DesktopShell extends StatelessWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.softGreen,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.calendar_today_outlined,
-                              size: 14,
-                              color: AppColors.primaryGreen,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _capitalize(date),
-                              style: const TextStyle(
+                      if (MediaQuery.sizeOf(context).width >= 1000)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.softGreen,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.calendar_today_outlined,
+                                size: 14,
                                 color: AppColors.primaryGreen,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 6),
+                              Text(
+                                _capitalize(date),
+                                style: const TextStyle(
+                                  color: AppColors.primaryGreen,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                       const SizedBox(width: 12),
                       _ProfileAvatar(profile: profile, radius: 18),
                     ],

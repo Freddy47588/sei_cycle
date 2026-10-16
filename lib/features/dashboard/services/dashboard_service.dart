@@ -61,11 +61,9 @@ class DashboardService {
       monthlyExpense: financeSummary?.expense ?? 0,
       monthlyProfit:
           (financeSummary?.income ?? 0) - (financeSummary?.expense ?? 0),
-      recentActivities: activities.isEmpty ? fallbackActivities : activities,
-      revenueItems: revenueItems.isEmpty ? fallbackRevenueItems : revenueItems,
-      circularFlows: circularFlows.isEmpty
-          ? fallbackCircularFlows
-          : circularFlows,
+      recentActivities: activities,
+      revenueItems: revenueItems,
+      circularFlows: circularFlows,
       lowStockPreview: [
         for (final document in lowStockDocs.take(5))
           _lowStockItemFromDocument(document),
@@ -138,7 +136,6 @@ class DashboardService {
           .where('isDeleted', isEqualTo: false)
           .where('isLowStock', isEqualTo: true)
           .orderBy('name')
-          .limit(20)
           .get();
       return snapshot.docs;
     } on FirebaseException catch (error) {
@@ -148,7 +145,7 @@ class DashboardService {
           .where((document) => document.data()['isLowStock'] == true)
           .toList();
       lowStock.sort(_compareString('name'));
-      return lowStock.take(20).toList();
+      return lowStock;
     }
   }
 
@@ -216,7 +213,6 @@ class DashboardService {
           .where(field, isGreaterThanOrEqualTo: Timestamp.fromDate(start))
           .where(field, isLessThan: Timestamp.fromDate(end))
           .orderBy(field, descending: descending)
-          .limit(20)
           .get();
       return snapshot.docs;
     } on FirebaseException catch (error) {
@@ -229,7 +225,7 @@ class DashboardService {
         return !date.isBefore(start) && date.isBefore(end);
       }).toList();
       filtered.sort(_compareTimestamp(field, descending: descending));
-      return filtered.take(20).toList();
+      return filtered;
     }
   }
 
@@ -349,141 +345,6 @@ class FinanceDashboardSummary {
   final double income;
   final double expense;
 }
-
-const fallbackActivities = [
-  DashboardActivity(
-    time: '06:00',
-    title: 'Pakan cacing & pemeriksaan kelembaban media',
-    icon: Icons.grass_outlined,
-    color: AppColors.primaryGreen,
-    done: true,
-  ),
-  DashboardActivity(
-    time: '06:30',
-    title: 'Pakan pagi 150 ekor ayam - 7,5 kg dedak+talas',
-    icon: Icons.egg_alt_outlined,
-    color: AppColors.warning,
-    done: true,
-  ),
-  DashboardActivity(
-    time: '07:00',
-    title: 'Pakan lele - 2,5 kg maggot segar, cek air bioflok',
-    icon: Icons.water_drop_outlined,
-    color: AppColors.info,
-    done: true,
-  ),
-  DashboardActivity(
-    time: '09:00',
-    title: 'Pemindahan batch maggot BSF hari ke-12 ke wadah panen',
-    icon: Icons.bug_report_outlined,
-    color: AppColors.accentLightGreen,
-    done: false,
-  ),
-  DashboardActivity(
-    time: '16:00',
-    title: 'Pakan sore ayam & pencatatan telur harian di logbook',
-    icon: Icons.edit_note_outlined,
-    color: AppColors.warning,
-    done: false,
-  ),
-  DashboardActivity(
-    time: '16:30',
-    title: 'Pakan sore lele & cek SR kolam',
-    icon: Icons.set_meal_outlined,
-    color: AppColors.info,
-    done: false,
-  ),
-  DashboardActivity(
-    time: '17:00',
-    title: 'Siram tanaman dengan air kolam & pupuk kascing cair',
-    icon: Icons.eco_outlined,
-    color: AppColors.success,
-    done: false,
-  ),
-];
-
-const fallbackRevenueItems = [
-  RevenueBreakdownItem(
-    label: 'Cacing & Kascing',
-    amount: 5000000,
-    portion: 0.25,
-    color: AppColors.primaryGreen,
-  ),
-  RevenueBreakdownItem(
-    label: 'Ayam & Telur',
-    amount: 5000000,
-    portion: 0.25,
-    color: AppColors.warning,
-  ),
-  RevenueBreakdownItem(
-    label: 'Lele Organik',
-    amount: 3000000,
-    portion: 0.15,
-    color: AppColors.info,
-  ),
-  RevenueBreakdownItem(
-    label: 'Maggot BSF',
-    amount: 2000000,
-    portion: 0.10,
-    color: AppColors.accentLightGreen,
-  ),
-  RevenueBreakdownItem(
-    label: 'Tanaman Pangan',
-    amount: 2000000,
-    portion: 0.10,
-    color: AppColors.accentBrown,
-  ),
-  RevenueBreakdownItem(
-    label: 'Edukasi & Workshop',
-    amount: 3000000,
-    portion: 0.15,
-    color: AppColors.success,
-  ),
-];
-
-const fallbackCircularFlows = [
-  DashboardCircularFlow(
-    sourceModuleType: 'tanaman',
-    destinationModuleType: 'maggot_bsf',
-    materialName: 'Sisa organik',
-    quantity: 12,
-    unit: 'kg',
-    notes:
-        'Sisa tanaman dan limbah organik digunakan sebagai bahan media maggot.',
-  ),
-  DashboardCircularFlow(
-    sourceModuleType: 'maggot_bsf',
-    destinationModuleType: 'ayam_kampung',
-    materialName: 'Maggot segar',
-    quantity: 3,
-    unit: 'kg',
-    notes: 'Maggot digunakan sebagai sumber protein tambahan untuk ayam.',
-  ),
-  DashboardCircularFlow(
-    sourceModuleType: 'ayam_kampung',
-    destinationModuleType: 'cacing_tanah',
-    materialName: 'Limbah kandang',
-    quantity: 18,
-    unit: 'kg',
-    notes: 'Limbah kandang diolah menjadi media dan pakan cacing.',
-  ),
-  DashboardCircularFlow(
-    sourceModuleType: 'cacing_tanah',
-    destinationModuleType: 'tanaman',
-    materialName: 'Kascing',
-    quantity: 20,
-    unit: 'kg',
-    notes: 'Kascing digunakan sebagai pupuk organik tanaman.',
-  ),
-  DashboardCircularFlow(
-    sourceModuleType: 'lele',
-    destinationModuleType: 'tanaman',
-    materialName: 'Air kolam kaya nutrisi',
-    quantity: 80,
-    unit: 'liter',
-    notes: 'Air kolam dimanfaatkan untuk penyiraman dan nutrisi tanaman.',
-  ),
-];
 
 bool _canFallback(FirebaseException error) =>
     error.code == 'failed-precondition' ||

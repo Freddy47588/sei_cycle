@@ -1,490 +1,327 @@
 import 'package:flutter/material.dart';
-
+import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/delete_confirmation.dart';
 import '../../../core/utils/operation_feedback.dart';
+import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_ui.dart';
-import '../../../core/widgets/async_state_widgets.dart';
 import '../../../core/widgets/feature_page.dart';
+import '../../../core/widgets/firestore_paged_list.dart';
 import '../../../theme/app_theme.dart';
 import '../../profile/models/app_user.dart';
 import '../../notification/services/notification_service.dart';
 import '../models/inventory_item.dart';
 import '../services/inventory_service.dart';
+import '../services/inventory_adjustment_service.dart';
+import '../widgets/inventory_master_form.dart';
+import '../widgets/inventory_transaction_form.dart';
+import 'inventory_history_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({required this.profile, super.key});
-
+  const InventoryScreen({
+    required this.profile,
+    this.service,
+    this.adjustments,
+    this.notifications,
+    super.key,
+  });
   final AppUser profile;
-
+  final InventoryService? service;
+  final InventoryAdjustmentService? adjustments;
+  final NotificationService? notifications;
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
-  late final InventoryService _service;
-  final Set<String> _syncedLowStockAlertIds = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _service = InventoryService();
-  }
-
-  void _syncLowStockAlerts(List<InventoryItem> items) {
-    if (!widget.profile.canManageInventory) return;
-    final lowStockItems = items
-        .where(
-          (item) =>
-              item.isLowStock && !_syncedLowStockAlertIds.contains(item.id),
-        )
-        .take(5)
-        .toList();
-    if (lowStockItems.isEmpty) return;
-
-    _syncedLowStockAlertIds.addAll(lowStockItems.map((item) => item.id));
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await NotificationService().createLowStockAlerts(
-        userId: widget.profile.uid,
-        role: widget.profile.effectiveRole,
-        items: lowStockItems,
-      );
-    });
-  }
-
-  Future<void> _openForm([InventoryItem? item]) async {
-    final value = await showDialog<_InventoryFormValue>(
-      context: context,
-      builder: (_) => _InventoryFormDialog(item: item),
-    );
-    if (value == null || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.save(
-        id: item?.id,
-        name: value.name,
-        category: value.category,
-        unit: value.unit,
-        currentStock: value.currentStock,
-        minStock: value.minStock,
-        userId: widget.profile.uid,
-      ),
-      successMessage: item == null
-          ? 'Inventaris ditambahkan.'
-          : 'Inventaris diperbarui.',
-    );
-  }
-
-  Future<void> _delete(InventoryItem item) async {
-    final confirmed = await confirmDelete(
-      context,
-      title: 'Hapus inventaris?',
-      message: 'Data ${item.name} akan dihapus dari inventaris.',
-    );
-    if (!confirmed || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.delete(item.id, userId: widget.profile.uid),
-      successMessage: 'Inventaris dihapus.',
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FeaturePage(
-      title: 'Inventaris',
-      subtitle: 'Pantau pakan, alat, benih, dan kebutuhan rutin Kebun Sei.',
-      actions: [
-        if (widget.profile.canManageInventory)
-          FilledButton.icon(
-            onPressed: _openForm,
-            icon: const Icon(Icons.add),
-            label: const Text('Tambah stok'),
-          ),
-      ],
-      child: StreamBuilder<List<InventoryItem>>(
-        stream: _service.watchItems(),
-        builder: (context, snapshot) {
-          final state = asyncSnapshotState(snapshot);
-          if (state != null) return state;
-          final items = snapshot.requireData;
-          _syncLowStockAlerts(items);
-          if (items.isEmpty) {
-            return const EmptyState(
-              title: 'Inventaris masih kosong',
-              message:
-                  'Data akan muncul setelah pakan, alat, benih, atau kebutuhan pertama dicatat.',
-              icon: Icons.inventory_2_outlined,
-            );
-          }
-
-          final lowStockCount = items.where((item) => item.isLowStock).length;
-          return Column(
-            children: [
-              AppCard(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 13,
-                ),
-                child: Wrap(
-                  spacing: 20,
-                  runSpacing: 10,
-                  children: [
-                    _SummaryItem(
-                      icon: Icons.inventory_2_outlined,
-                      label: '${items.length} jenis inventaris',
-                      color: AppColors.primaryGreen,
-                    ),
-                    _SummaryItem(
-                      icon: lowStockCount == 0
-                          ? Icons.check_circle_outline
-                          : Icons.warning_amber_rounded,
-                      label: lowStockCount == 0
-                          ? 'Stok dalam kondisi aman'
-                          : '$lowStockCount item perlu perhatian',
-                      color: lowStockCount == 0
-                          ? AppColors.success
-                          : AppColors.warning,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) => _InventoryItemCard(
-                    item: items[index],
-                    canEdit: widget.profile.canManageInventory,
-                    canDelete: widget.profile.canDeleteInventory,
-                    onEdit: () => _openForm(items[index]),
-                    onDelete: () => _delete(items[index]),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _SummaryItem extends StatelessWidget {
-  const _SummaryItem({
-    required this.icon,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: color, size: 18),
-        const SizedBox(width: 7),
-        Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _InventoryItemCard extends StatelessWidget {
-  const _InventoryItemCard({
-    required this.item,
-    required this.canEdit,
-    required this.canDelete,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final InventoryItem item;
-  final bool canEdit;
-  final bool canDelete;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _stockStatusColor(item);
-    return AppCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AppIconBox(icon: Icons.inventory_2_outlined, color: color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.name,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            item.category,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: AppColors.textMuted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    StatusBadge(
-                      label: _stockStatusLabel(item),
-                      color: color,
-                      icon: item.isLowStock
-                          ? Icons.warning_amber_rounded
-                          : Icons.check_circle_outline,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${_number(item.currentStock)} ${item.unit}',
-                            style: Theme.of(
-                              context,
-                            ).textTheme.titleLarge?.copyWith(color: color),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Batas minimum ${_number(item.minStock)} ${item.unit}',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(color: AppColors.textMuted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (canEdit || canDelete)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (canEdit)
-                            IconButton(
-                              onPressed: onEdit,
-                              icon: const Icon(Icons.edit_outlined, size: 19),
-                              tooltip: 'Edit stok',
-                            ),
-                          if (canDelete)
-                            IconButton(
-                              onPressed: onDelete,
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 19,
-                                color: AppColors.error,
-                              ),
-                              tooltip: 'Hapus inventaris',
-                            ),
-                        ],
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InventoryFormValue {
-  const _InventoryFormValue({
-    required this.name,
-    required this.category,
-    required this.unit,
-    required this.currentStock,
-    required this.minStock,
-  });
-
-  final String name;
-  final String category;
-  final String unit;
-  final double currentStock;
-  final double minStock;
-}
-
-class _InventoryFormDialog extends StatefulWidget {
-  const _InventoryFormDialog({this.item});
-
-  final InventoryItem? item;
-
-  @override
-  State<_InventoryFormDialog> createState() => _InventoryFormDialogState();
-}
-
-class _InventoryFormDialogState extends State<_InventoryFormDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _name;
-  late final TextEditingController _category;
-  late final TextEditingController _unit;
-  late final TextEditingController _currentStock;
-  late final TextEditingController _minStock;
-
-  @override
-  void initState() {
-    super.initState();
-    final item = widget.item;
-    _name = TextEditingController(text: item?.name);
-    _category = TextEditingController(text: item?.category);
-    _unit = TextEditingController(text: item?.unit);
-    _currentStock = TextEditingController(
-      text: item == null ? '' : _number(item.currentStock),
-    );
-    _minStock = TextEditingController(
-      text: item == null ? '' : _number(item.minStock),
-    );
-  }
-
+  late final _service = widget.service ?? InventoryService();
+  final _search = TextEditingController(), _category = TextEditingController();
+  String _module = '', _categoryFilter = '', _stock = 'all', _sort = 'name';
+  int _revision = 0;
   @override
   void dispose() {
-    _name.dispose();
+    _search.dispose();
     _category.dispose();
-    _unit.dispose();
-    _currentStock.dispose();
-    _minStock.dispose();
     super.dispose();
   }
 
-  double? _parse(String value) =>
-      double.tryParse(value.trim().replaceAll(',', '.'));
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(
-      context,
-      _InventoryFormValue(
-        name: _name.text,
-        category: _category.text,
-        unit: _unit.text,
-        currentStock: _parse(_currentStock.text)!,
-        minStock: _parse(_minStock.text)!,
+  Future<void> _form([InventoryItem? item]) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => InventoryMasterForm(
+        service: _service,
+        userId: widget.profile.uid,
+        item: item,
       ),
     );
+    if (saved == true && mounted) setState(() => _revision++);
+  }
+
+  Future<void> _mutate(InventoryItem item) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => InventoryTransactionForm(
+        item: item,
+        userId: widget.profile.uid,
+        service: widget.adjustments ?? InventoryAdjustmentService(),
+      ),
+    );
+    if (saved == true && mounted) setState(() => _revision++);
+  }
+
+  void _history([InventoryItem? item]) => Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (_) => InventoryHistoryScreen(
+        userId: widget.profile.uid,
+        canEdit: widget.profile.canManageLogbooks,
+        field: item == null ? null : 'itemId',
+        value: item?.id,
+      ),
+    ),
+  );
+  Future<void> _delete(InventoryItem item) async {
+    if (!await confirmDelete(
+          context,
+          title: 'Hapus master barang?',
+          message: 'Stok harus nol. Seluruh histori dipertahankan.',
+        ) ||
+        !mounted) {
+      return;
+    }
+    await runOperationWithFeedback(
+      context,
+      operation: () => _service.delete(item.id, userId: widget.profile.uid),
+      successMessage: 'Master barang dihapus.',
+    );
+    if (mounted) setState(() => _revision++);
+  }
+
+  List<InventoryItem> _visible(List<InventoryItem> rows) {
+    rows = rows.where((item) => !item.isDeleted).toList();
+    final text = _search.text.trim().toLowerCase();
+    rows = rows
+        .where(
+          (i) =>
+              '${i.name} ${i.itemKey} ${i.location}'.toLowerCase().contains(
+                text,
+              ) &&
+              switch (_stock) {
+                'safe' => i.currentStock > i.minStock,
+                'low' => i.currentStock > 0 && i.currentStock <= i.minStock,
+                'empty' => i.currentStock <= 0,
+                _ => true,
+              },
+        )
+        .toList();
+    rows.sort(
+      (a, b) => switch (_sort) {
+        'stock' => a.currentStock.compareTo(b.currentStock),
+        'updated' => b.updatedAt.compareTo(a.updatedAt),
+        _ => a.name.compareTo(b.name),
+      },
+    );
+    return rows;
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AppDialogShell(
-      title: widget.item == null ? 'Tambah Inventaris' : 'Edit Inventaris',
-      maxWidth: 480,
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  Widget build(BuildContext context) => FeaturePage(
+    title: 'Inventaris',
+    subtitle: 'Persediaan lokasi, mutasi stok, dan histori Kebun Sei.',
+    actions: [
+      OutlinedButton.icon(
+        onPressed: _history,
+        icon: const Icon(Icons.history),
+        label: const Text('Riwayat Mutasi'),
+      ),
+      if (widget.profile.canManageInventory)
+        FilledButton.icon(
+          onPressed: _form,
+          icon: const Icon(Icons.add),
+          label: const Text('Tambah Barang'),
+        ),
+      IconButton(
+        onPressed: () => setState(() => _revision++),
+        tooltip: 'Muat ulang stok',
+        icon: const Icon(Icons.refresh),
+      ),
+    ],
+    child: Column(
+      children: [
+        TextField(
+          controller: _search,
+          decoration: const InputDecoration(
+            labelText: 'Cari nama, item key, lokasi pada data dimuat',
+            prefixIcon: Icon(Icons.search),
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 8),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text('Filter & urutan'),
           children: [
-            TextFormField(
-              controller: _name,
-              decoration: const InputDecoration(
-                labelText: 'Nama item',
-                hintText: 'Contoh: pakan lele',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _category,
-              decoration: const InputDecoration(
-                labelText: 'Kategori',
-                hintText: 'Pakan, alat, benih, atau lainnya',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _unit,
-              decoration: const InputDecoration(
-                labelText: 'Satuan',
-                hintText: 'kg, liter, pcs, karung',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
             ResponsiveFormRow(
               children: [
-                TextFormField(
-                  controller: _currentStock,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(labelText: 'Stok saat ini'),
-                  validator: (value) {
-                    final stock = _parse(value ?? '');
-                    return stock == null || stock < 0
-                        ? 'Stok tidak boleh negatif'
-                        : null;
-                  },
+                DropdownButtonFormField<String>(
+                  initialValue: _module,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Modul'),
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('Semua Modul'),
+                    ),
+                    for (final m in FarmModules.values)
+                      DropdownMenuItem(value: m.id, child: Text(m.name)),
+                  ],
+                  onChanged: (v) => setState(() => _module = v!),
                 ),
-                TextFormField(
-                  controller: _minStock,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+                TextField(
+                  controller: _category,
+                  decoration: InputDecoration(
+                    labelText: 'Kategori (persis)',
+                    suffixIcon: IconButton(
+                      tooltip: 'Terapkan kategori',
+                      onPressed: () => setState(
+                        () => _categoryFilter = _category.text.trim(),
+                      ),
+                      icon: const Icon(Icons.check),
+                    ),
                   ),
-                  decoration: const InputDecoration(labelText: 'Stok minimum'),
-                  validator: (value) {
-                    final stock = _parse(value ?? '');
-                    return stock == null || stock < 0
-                        ? 'Stok tidak boleh negatif'
-                        : null;
-                  },
+                  onSubmitted: (v) =>
+                      setState(() => _categoryFilter = v.trim()),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ResponsiveFormRow(
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _stock,
+                  decoration: const InputDecoration(
+                    labelText: 'Status stok dimuat',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'all', child: Text('Semua Barang')),
+                    DropdownMenuItem(value: 'safe', child: Text('Stok Aman')),
+                    DropdownMenuItem(value: 'low', child: Text('Stok Rendah')),
+                    DropdownMenuItem(value: 'empty', child: Text('Stok Habis')),
+                  ],
+                  onChanged: (v) => setState(() => _stock = v!),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: _sort,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Urutkan data dimuat',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'name', child: Text('Nama A-Z')),
+                    DropdownMenuItem(
+                      value: 'stock',
+                      child: Text('Stok terkecil'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'updated',
+                      child: Text('Baru diperbarui'),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _sort = v!),
                 ),
               ],
             ),
           ],
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Batal'),
+        Expanded(
+          child: FirestorePagedList<InventoryItem>(
+            idOf: (item) => item.id,
+            queryKey: (_module, _categoryFilter, _revision),
+            load: (cursor) => _service.fetchPage(
+              moduleType: _module.isEmpty ? null : _module,
+              category: _categoryFilter.isEmpty ? null : _categoryFilter,
+              cursor: cursor,
+            ),
+            transform: _visible,
+            watchPage: _service.watchLoaded,
+            onLoaded: widget.profile.canManageInventory
+                ? (items) => (widget.notifications ?? NotificationService())
+                      .createLowStockAlerts(
+                        userId: widget.profile.uid,
+                        role: widget.profile.effectiveRole,
+                        items: items,
+                      )
+                : null,
+            itemBuilder: (item) => AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  StatusBadge(
+                    label: item.currentStock <= 0
+                        ? 'Stok Habis'
+                        : item.isLowStock
+                        ? 'Stok Rendah'
+                        : 'Stok Aman',
+                    color: item.currentStock <= 0
+                        ? AppColors.error
+                        : item.isLowStock
+                        ? AppColors.warning
+                        : AppColors.success,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${item.currentStock} ${item.unit}',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  Text(
+                    'Minimum ${item.minStock} ${item.unit} \u00b7 ${item.category}',
+                  ),
+                  Text(
+                    item.moduleType.isEmpty
+                        ? 'Modul umum'
+                        : FarmModules.nameOf(item.moduleType),
+                  ),
+                  if (item.location.isNotEmpty)
+                    Text('Lokasi: ${item.location}'),
+                  Text('Diperbarui: ${dateTimeFormat.format(item.updatedAt)}'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _history(item),
+                        icon: const Icon(Icons.history),
+                        label: const Text('Histori'),
+                      ),
+                      if (widget.profile.canManageInventory) ...[
+                        TextButton(
+                          onPressed: () => _form(item),
+                          child: const Text('Edit Master'),
+                        ),
+                        FilledButton.tonal(
+                          onPressed: () => _mutate(item),
+                          child: const Text('Mutasi Stok'),
+                        ),
+                      ],
+                      if (widget.profile.canDeleteInventory)
+                        IconButton(
+                          onPressed: () => _delete(item),
+                          tooltip: 'Hapus master barang',
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Simpan')),
       ],
-    );
-  }
-}
-
-String _number(double value) => value == value.roundToDouble()
-    ? value.toStringAsFixed(0)
-    : value.toString();
-
-String? _required(String? value) =>
-    value == null || value.trim().isEmpty ? 'Wajib diisi' : null;
-
-String _stockStatusLabel(InventoryItem item) {
-  if (!item.isLowStock) return 'Aman';
-  if (item.currentStock <= 0) return 'Stok rendah';
-  return 'Menipis';
-}
-
-Color _stockStatusColor(InventoryItem item) {
-  if (!item.isLowStock) return AppColors.success;
-  if (item.currentStock <= 0) return AppColors.error;
-  return AppColors.warning;
+    ),
+  );
 }

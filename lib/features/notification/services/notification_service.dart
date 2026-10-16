@@ -155,7 +155,7 @@ class NotificationService {
     required String role,
     required Iterable<InventoryItem> items,
   }) async {
-    for (final item in items.where((item) => item.isLowStock).take(5)) {
+    for (final item in items.take(20)) {
       await createLowStockAlert(
         userId: userId,
         role: role,
@@ -183,20 +183,46 @@ class NotificationService {
     requireTrimmed(name, 'name');
 
     final id = 'low_stock_${userId}_$itemId';
-    await _collection.doc(id).set({
-      'id': id,
-      'title': 'Stok $name rendah',
-      'body':
-          'Stok $name tersisa ${_number(currentStock)} $unit, batas minimum ${_number(minStock)} $unit.',
-      'type': 'low_stock',
-      'targetRole': role,
-      'userId': userId,
-      'relatedCollection': FirestoreCollections.inventory,
-      'relatedId': itemId,
-      'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isDeleted': false,
-    }, SetOptions(merge: true));
+    await _firestore.runTransaction((tx) async {
+      final item = await tx.get(_firestore.collection('inventory').doc(itemId));
+      final existing = await tx.get(_collection.doc(id));
+      if (!item.exists) return;
+      final actual = InventoryItem.fromDocument(item);
+      if (!actual.isLowStock || actual.isDeleted) {
+        if (existing.exists && existing.data()?['isDeleted'] != true) {
+          tx.update(existing.reference, {
+            'isDeleted': true,
+            'updatedBy': userId,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        return;
+      }
+      final title = actual.currentStock <= 0
+          ? 'Stok ${actual.name} habis'
+          : 'Stok ${actual.name} rendah';
+      final body =
+          'Saat diperiksa: ${_number(actual.currentStock)} ${actual.unit}, minimum ${_number(actual.minStock)} ${actual.unit}. Buka Inventaris untuk kondisi terbaru.';
+      if (existing.exists &&
+          existing.data()?['isDeleted'] != true &&
+          existing.data()?['title'] == title &&
+          existing.data()?['body'] == body) {
+        return;
+      }
+      tx.set(_collection.doc(id), {
+        'id': id,
+        'title': title,
+        'body': body,
+        'type': 'low_stock',
+        'targetRole': role,
+        'userId': userId,
+        'relatedCollection': FirestoreCollections.inventory,
+        'relatedId': itemId,
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isDeleted': false,
+      });
+    });
   }
 
   Future<void> createLowStockNotificationIfNeeded({
@@ -208,33 +234,15 @@ class NotificationService {
     required String unit,
     String targetRole = 'admin',
   }) async {
-    requireTrimmed(userId, 'userId');
-    requireTrimmed(itemId, 'itemId');
-    requireTrimmed(name, 'name');
-    if (currentStock > minStock) return;
-
-    final id = 'low_stock_${userId}_$itemId';
-    final existing = await _collection.doc(id).get();
-    final data = existing.data();
-    if (existing.exists &&
-        data?['isDeleted'] != true &&
-        data?['isRead'] != true) {
-      return;
-    }
-
-    await _collection.doc(id).set({
-      'id': id,
-      'title': 'Stok $name rendah',
-      'body': 'Stok $name menipis. Sisa ${_number(currentStock)} $unit.',
-      'type': 'low_stock',
-      'targetRole': targetRole,
-      'userId': userId,
-      'relatedCollection': FirestoreCollections.inventory,
-      'relatedId': itemId,
-      'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isDeleted': false,
-    }, SetOptions(merge: true));
+    await createLowStockAlert(
+      userId: userId,
+      role: targetRole,
+      itemId: itemId,
+      name: name,
+      currentStock: currentStock,
+      minStock: minStock,
+      unit: unit,
+    );
   }
 
   Future<void> createScheduleOverdueAlert({
@@ -248,19 +256,48 @@ class NotificationService {
     requireTrimmed(role, 'role');
 
     final id = 'schedule_overdue_${userId}_$scheduleId';
-    await _collection.doc(id).set({
-      'id': id,
-      'title': 'Jadwal overdue',
-      'body': 'Jadwal $title sudah melewati waktu dan masih pending.',
-      'type': 'schedule_overdue',
-      'targetRole': role,
-      'userId': userId,
-      'relatedCollection': FirestoreCollections.schedules,
-      'relatedId': scheduleId,
-      'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'isDeleted': false,
-    }, SetOptions(merge: true));
+    await _firestore.runTransaction((tx) async {
+      final schedule = await tx.get(
+        _firestore.collection('schedules').doc(scheduleId),
+      );
+      final old = await tx.get(_collection.doc(id));
+      final d = schedule.data();
+      final date = (d?['date'] as Timestamp?)?.toDate();
+      if (!schedule.exists ||
+          d?['isDeleted'] == true ||
+          d?['status'] != 'pending' ||
+          date == null ||
+          !date.isBefore(DateTime.now())) {
+        if (old.exists && old.data()?['isDeleted'] != true) {
+          tx.update(old.reference, {
+            'isDeleted': true,
+            'updatedBy': userId,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        return;
+      }
+      final body =
+          'Saat diperiksa, jadwal ${d?['title']} (${date.toIso8601String()}) melewati waktu dan masih pending. Periksa kalender untuk status terbaru.';
+      if (old.exists &&
+          old.data()?['isDeleted'] != true &&
+          old.data()?['body'] == body) {
+        return;
+      }
+      tx.set(_collection.doc(id), {
+        'id': id,
+        'title': 'Jadwal Terlewat',
+        'body': body,
+        'type': 'schedule_overdue',
+        'targetRole': role,
+        'userId': userId,
+        'relatedCollection': FirestoreCollections.schedules,
+        'relatedId': scheduleId,
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isDeleted': false,
+      });
+    });
   }
 
   Future<void> createProductionReminder({

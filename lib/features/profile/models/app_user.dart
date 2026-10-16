@@ -47,11 +47,11 @@ class AppUser {
   bool get canManageLogbooks => isActive && (isAdmin || isOperatorLapangan);
   bool get canDeleteLogbooks => isActive && isAdmin;
   bool get canViewInventory => isActive;
-  bool get canManageInventory => isAdmin || isOperatorLapangan;
-  bool get canDeleteInventory => isAdmin;
+  bool get canManageInventory => isActive && (isAdmin || isOperatorLapangan);
+  bool get canDeleteInventory => isActive && isAdmin;
   bool get canViewSchedules => isActive;
-  bool get canManageSchedules => isAdmin || isOperatorLapangan;
-  bool get canDeleteSchedules => isAdmin;
+  bool get canManageSchedules => isActive && (isAdmin || isOperatorLapangan);
+  bool get canDeleteSchedules => isActive && isAdmin;
 
   bool get canViewFinance => isActive && (isAdmin || isOperatorKeuangan);
   bool get canManageFinance => isAdmin || isOperatorKeuangan;
@@ -76,10 +76,7 @@ class AppUser {
       role: stringField(data, const [
         'role',
       ], fallback: AppRoles.legacyPesertaEdukasi),
-      isActive: boolField(data, const [
-        'isActive',
-        'is_active',
-      ], fallback: true),
+      isActive: data['isActive'] != false && data['is_active'] != false,
       createdAt: dateTimeField(data, const ['createdAt', 'created_at']),
       updatedAt: dateTimeField(data, const ['updatedAt', 'updated_at']),
     );

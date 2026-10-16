@@ -4,6 +4,12 @@ import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, where, orderBy, limit, startAfter, writeBatch, serverTimestamp, Timestamp, runTransaction, setLogLevel } from 'firebase/firestore';
 setLogLevel('silent');
+async function retryTransaction(db, body) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await runTransaction(db, body); }
+    catch (e) { if (attempt >= 2 || !['permission-denied','aborted'].includes(e.code)) throw e; }
+  }
+}
 let env;
 const now = Timestamp.fromMillis(1792108800000);
 const entry = (id = 'entry') => ({ id, title: 'Pengamatan', moduleType: 'ayam_kampung', activityType: 'input_harian_ayam', activityDate: now, quantity: 0, unit: 'butir', status: 'completed', notes: 'Asli', details: { mortalitas_hari_ini: 0 }, createdBy: 'field', updatedBy: 'field', createdAt: now, updatedAt: now, isDeleted: false });
@@ -79,7 +85,7 @@ test('module/date queries page without repeated document IDs', async () => {
 test('concurrent transaction edits preserve conflict detection', async () => {
   async function change(uid, auditId) {
     const db = dbFor(uid);
-    return runTransaction(db, async tx => {
+    return retryTransaction(db, async tx => {
       const ref = doc(db, 'logbooks/entry');
       const old = await tx.get(ref);
       if (old.data().notes !== 'Asli') throw new Error('conflict');
@@ -94,7 +100,7 @@ test('concurrent transaction edits preserve conflict detection', async () => {
 // Firestore SDK contract tests for the same multi-collection write shape used
 // by the Dart service. The actual Dart method is exercised by the unit fake.
 async function createOperational(db, uid, id, { deny = false } = {}) {
-  try { return await runTransaction(db, async tx => {
+  try { return await retryTransaction(db, async tx => {
     const ref = doc(db, 'logbooks', id);
     if ((await tx.get(ref)).exists()) return id;
     const feedRef = doc(db, 'inventory/logbook_dedak_padi');
@@ -105,8 +111,8 @@ async function createOperational(db, uid, id, { deny = false } = {}) {
     tx.set(ref, { ...entry(id), details: { dedak_padi_kg: 5, produksi_telur_hari_ini: 3 }, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
     for (const [stockRef, snapshot, delta, unit] of stocks) {
       const before = snapshot.data()?.currentStock ?? 0;
-      tx.set(stockRef, { id: stockRef.id, itemKey: stockRef.id.slice(8), unit, currentStock: before + delta, minStock: 0, isLowStock: before + delta <= 0, createdBy: snapshot.data()?.createdBy ?? uid, createdAt: snapshot.data()?.createdAt ?? serverTimestamp(), updatedBy: uid, updatedAt: serverTimestamp(), isDeleted: false });
-      tx.set(doc(db, 'inventory_transactions', `${id}-${stockRef.id}`), { id: `${id}-${stockRef.id}`, logbookId: id, itemId: stockRef.id, type: delta < 0 ? 'out' : 'in', quantity: Math.abs(delta), beforeStock: before, afterStock: before + delta, unit, createdBy: uid, createdAt: serverTimestamp(), transactionDate: serverTimestamp(), isReversed: false });
+      tx.set(stockRef, { id: stockRef.id, name: stockRef.id.slice(8), category: 'operasional', moduleType: 'ayam_kampung', location: '', lastTransactionId: `${id}-${stockRef.id}`, itemKey: stockRef.id.slice(8), unit, currentStock: before + delta, minStock: 0, isLowStock: before + delta <= 0, createdBy: snapshot.data()?.createdBy ?? uid, createdAt: snapshot.data()?.createdAt ?? serverTimestamp(), updatedBy: uid, updatedAt: serverTimestamp(), isDeleted: false });
+      tx.set(doc(db, 'inventory_transactions', `${id}-${stockRef.id}`), { id: `${id}-${stockRef.id}`, itemName: stockRef.id.slice(8), itemKey: stockRef.id.slice(8), moduleType: 'ayam_kampung', notes: 'Otomatis dari logbook', source: 'logbook', requestId: id, logbookId: id, itemId: stockRef.id, type: delta < 0 ? 'out' : 'in', quantity: Math.abs(delta), beforeStock: before, afterStock: before + delta, unit, createdBy: uid, createdAt: serverTimestamp(), transactionDate: serverTimestamp(), isReversed: false });
     }
     tx.set(doc(db, 'production_results', `${id}-eggs`), { id: deny ? 'wrong-id' : `${id}-eggs`, logbookId: id, quantity: 3, unit: 'butir', createdBy: uid, createdAt: serverTimestamp() });
     return id;
@@ -229,7 +235,7 @@ test('phase03 batch status checked after all writes: cannot complete and append 
 });
 test('phase03 concurrent code reservation has one winner without overwrites', async () => {
   const db = dbFor('field'), ref = doc(db, 'batches/UNIQUE');
-  const create = () => runTransaction(db, async tx => {
+  const create = () => retryTransaction(db, async tx => {
     if ((await tx.get(ref)).exists()) throw new Error('duplicate code');
     tx.set(ref, batchData('UNIQUE')); return ref.id;
   });
@@ -242,7 +248,7 @@ test('phase03 completion racing logbook transaction aborts without stock side ef
   let markRead, release;
   const hasRead = new Promise(r => {markRead = r;});
   const ready = new Promise(r => {release = r;});
-  const save = runTransaction(db, async tx => {
+  const save = retryTransaction(db, async tx => {
     const batch = await tx.get(doc(db, 'batches/KOLAM-A'));
     if (batch.data().status !== 'active') throw new Error('batch inactive');
     markRead(); await ready;
@@ -268,5 +274,259 @@ test('phase03 batch and activity queries page with filters and tied timestamps',
     const first = await getDocs(base), second = await getDocs(query(base, startAfter(first.docs.at(-1))));
     assert.equal(first.size,20); assert.equal(second.size,3);
     assert.equal(new Set([...first.docs,...second.docs].map(d=>d.id)).size,23);
+  }
+});
+
+// Phase 04 contract: atomic inventory ledger and operational checklist.
+const stockData = (id = 'feed', stock = 20) => ({id, name: 'Pakan', itemKey: 'pakan',
+  moduleType: 'lele', category: 'pakan', unit: 'kg', location: 'Gudang',
+  currentStock: stock, minStock: 5, isLowStock: stock <= 5, isDeleted: false,
+  createdBy: 'field', updatedBy: 'field', createdAt: now, updatedAt: now});
+async function seedStock(stock = 20) {
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'inventory/feed'), stockData('feed', stock)));
+}
+const ledgerData = (id, before = 20, value = 10, type = 'in', uid = 'field', patch = {}) => {
+  const after = type === 'correction' ? value : type === 'out' ? before - value : before + value;
+  return {id, requestId: id, itemId: 'feed', itemName: 'Pakan', itemKey: 'pakan',
+    moduleType: 'lele', type, quantity: type === 'correction' ? Math.abs(after - before) : value,
+    requestedValue: value, unit: 'kg', beforeStock: before, afterStock: after, notes: 'Stock opname',
+    source: 'manual', allowNegative: false, batchId: null, transactionDate: serverTimestamp(),
+    createdBy: uid, createdAt: serverTimestamp(), isReversed: false, ...patch};
+};
+async function mutate(db, id, {value = 10, type = 'in', uid = 'field', patch = {}, stockPatch = {}} = {}) {
+  return retryTransaction(db, async tx => {
+    const history = doc(db, 'inventory_transactions', id), item = doc(db, 'inventory/feed');
+    const old = await tx.get(history);
+    if (old.exists()) {
+      if (old.data().requestedValue !== value || old.data().type !== type || old.data().createdBy !== uid) throw new Error('Request ID payload berbeda');
+      return id;
+    }
+    const current = await tx.get(item);
+    const data = ledgerData(id, current.data().currentStock, value, type, uid, patch);
+    tx.update(item, {currentStock: data.afterStock, isLowStock: data.afterStock <= current.data().minStock,
+      lastTransactionId: id, updatedBy: uid, updatedAt: serverTimestamp(), ...stockPatch});
+    tx.set(history, data);
+    return id;
+  });
+}
+test('phase04 stock in 20+10, out 30-5, absolute correction 25->23 and one history each', async () => {
+  await seedStock(); const db = dbFor('field');
+  await mutate(db, 'in'); await mutate(db, 'out', {type: 'out', value: 5});
+  await mutate(db, 'correct', {type: 'correction', value: 23});
+  assert.equal((await getDoc(doc(db, 'inventory/feed'))).data().currentStock, 23);
+  const h = (await getDoc(doc(db, 'inventory_transactions/correct'))).data();
+  assert.equal(h.beforeStock, 25); assert.equal(h.afterStock, 23); assert.equal(h.quantity, 2);
+  assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 3);
+});
+test('phase04 identical request retries once; different payload rejected', async () => {
+  await seedStock(); const db = dbFor('field');
+  await mutate(db, 'once'); await mutate(db, 'once');
+  await assert.rejects(mutate(db, 'once', {value: 9}), /payload berbeda/);
+  assert.equal((await getDoc(doc(db, 'inventory/feed'))).data().currentStock, 30);
+  assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 1);
+});
+test('phase04 concurrent operators serialize without lost updates', async () => {
+  await seedStock();
+  await Promise.all([mutate(dbFor('field'), 'a'), mutate(dbFor('admin'), 'b', {uid: 'admin', value: 5})]);
+  assert.equal((await getDoc(doc(dbFor('field'), 'inventory/feed'))).data().currentStock, 35);
+});
+for (const uid of ['admin', 'field', 'finance', 'reader', 'inactive']) {
+  test(`phase04 ${uid} inventory and schedule authorization`, async () => {
+    await seedStock(); const db = dbFor(uid);
+    const read = uid === 'inactive' ? assertFails : assertSucceeds;
+    await read(getDoc(doc(db, 'inventory/feed')));
+    const allowed = ['admin','field'].includes(uid) ? assertSucceeds : assertFails;
+    await allowed(mutate(db, `role-${uid}`, {uid}));
+    await allowed(setDoc(doc(db, 'schedules/role'), scheduleData('role', uid)));
+  });
+}
+test('phase04 anonymous stock, history and schedules rejected', async () => {
+  await seedStock(); const db = env.unauthenticatedContext().firestore();
+  for (const path of ['inventory/feed', 'inventory_transactions/a', 'schedules/role']) await assertFails(getDoc(doc(db, path)));
+  await assertFails(mutate(db, 'anon'));
+});
+test('phase04 legacy operator writes and legacy reader remains read-only', async () => {
+  await seedStock();
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'users/legacy'), {role: 'operator', isActive: true}));
+  await assertSucceeds(mutate(dbFor('legacy'), 'legacy', {uid: 'legacy'}));
+  await assertFails(mutate(dbFor('reader'), 'reader', {uid: 'reader'}));
+});
+test('phase04 admin and field cannot directly write stock or forge immutable master identity', async () => {
+  await seedStock();
+  for (const uid of ['field', 'admin']) {
+    const db = dbFor(uid);
+    for (const patch of [{currentStock: 100}, {currentStock: 100, lastTransactionId: 'missing'},
+      {unit: 'liter'}, {itemKey: 'other'}, {moduleType: 'tanaman'}, {createdBy: uid}, {createdAt: serverTimestamp()}, {id: 'other'}]) {
+      if (patch.createdBy === 'field') continue;
+      await assertFails(updateDoc(doc(db, 'inventory/feed'), {...patch, updatedBy: uid, updatedAt: serverTimestamp()}));
+    }
+  }
+});
+test('phase04 metadata keeps stock and computes low flag; ledger is immutable', async () => {
+  await seedStock(); const db = dbFor('field');
+  await assertSucceeds(updateDoc(doc(db, 'inventory/feed'), {name: 'Pakan Baru', minStock: 25, isLowStock: true, location: 'Gudang B', updatedBy: 'field', updatedAt: serverTimestamp()}));
+  assert.equal((await getDoc(doc(db, 'inventory/feed'))).data().currentStock, 20);
+  await assertFails(updateDoc(doc(db, 'inventory/feed'), {isLowStock: false, updatedBy: 'field', updatedAt: serverTimestamp()}));
+});
+test('phase04 invalid unit, NaN, infinity, actor, audit, reversal and mismatched paired stock fail atomically', async () => {
+  await seedStock(); const db = dbFor('field');
+  const patches = [{unit: 'liter'}, {quantity: NaN}, {quantity: Infinity}, {createdBy: 'admin'},
+    {createdAt: now}, {transactionDate: now}, {isReversed: true}, {reversedBy: 'field'},
+    {itemId: 'another'}, {itemName: 'Forged'}, {beforeStock: 3}, {quantity: -1}, {notes: ''}, {logbookId: 'entry'}];
+  for (const [i, patch] of patches.entries()) await assertFails(mutate(db, `bad-${i}`, {patch}));
+  await assertFails(mutate(db, 'bad-stock', {stockPatch: {currentStock: 99}}));
+  assert.equal((await getDoc(doc(db, 'inventory/feed'))).data().currentStock, 20);
+  assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 0);
+});
+test('phase04 stock minus requires explicit permission and absolute correction stays nonnegative', async () => {
+  await seedStock(2); const db = dbFor('field');
+  await assertFails(mutate(db, 'negative', {type: 'out', value: 5}));
+  await assertSucceeds(mutate(db, 'negative', {type: 'out', value: 5, patch: {allowNegative: true}}));
+  await assertFails(mutate(db, 'bad-correction', {type: 'correction', value: -4, patch: {allowNegative: true}}));
+  await assertSucceeds(mutate(db, 'correction', {type: 'correction', value: 0}));
+});
+test('phase04 history cannot be overwritten, reversed or deleted even by admin, or added without paired item', async () => {
+  await seedStock(); const db = dbFor('admin');
+  await mutate(db, 'audit', {uid: 'admin'});
+  for (const patch of [{notes: 'erase'}, {quantity: 99}, {isReversed: true}, {createdBy: 'field'}]) await assertFails(updateDoc(doc(db, 'inventory_transactions/audit'), patch));
+  await assertFails(deleteDoc(doc(db, 'inventory_transactions/audit')));
+  await assertFails(setDoc(doc(db, 'inventory_transactions/unpaired'), ledgerData('unpaired', 30, 1, 'in', 'admin')));
+  await assertFails(updateDoc(doc(db, 'inventory/feed'), {currentStock: 40, lastTransactionId: 'audit', updatedBy: 'admin', updatedAt: serverTimestamp()}));
+});
+test('phase04 opening stock must have atomic opening ledger; retry cannot overwrite', async () => {
+  const db = dbFor('field'), ref = doc(db, 'inventory/new');
+  const data = {...stockData('new', 10), createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastTransactionId: 'opening_new'};
+  await assertFails(setDoc(ref, data));
+  const batch = writeBatch(db); batch.set(ref, data);
+  const h = {...ledgerData('opening_new', 0, 10), itemId: 'new', requestId: 'new', type: 'opening', source: 'opening'};
+  delete h.batchId; delete h.allowNegative; delete h.requestedValue;
+  batch.set(doc(db, 'inventory_transactions/opening_new'), h);
+  await assertSucceeds(batch.commit());
+  await assertFails(setDoc(ref, {...data, currentStock: 50}));
+});
+test('phase04 zero stock creation and zero-only admin soft deletion retain history', async () => {
+  const db = dbFor('admin'), ref = doc(db, 'inventory/zero');
+  await assertSucceeds(setDoc(ref, {...stockData('zero', 0), createdBy: 'admin', updatedBy: 'admin', createdAt: serverTimestamp(), updatedAt: serverTimestamp()}));
+  await assertFails(deleteDoc(ref));
+  await assertSucceeds(updateDoc(ref, {isDeleted: true, updatedBy: 'admin', updatedAt: serverTimestamp()}));
+  await seedStock();
+  await assertFails(updateDoc(doc(db, 'inventory/feed'), {isDeleted: true, updatedBy: 'admin', updatedAt: serverTimestamp()}));
+});
+test('phase04 history filters and timestamp cursor include all matching rows', async () => {
+  await seedStock(); const db = dbFor('field');
+  for (let i = 0; i < 3; i++) await mutate(db, `page-${i}`);
+  const q = query(collection(db, 'inventory_transactions'), where('itemId', '==', 'feed'), orderBy('transactionDate', 'desc'), limit(2));
+  const first = await getDocs(q), next = await getDocs(query(q, startAfter(first.docs.at(-1))));
+  assert.equal(first.size, 2); assert.equal(next.size, 1);
+  assert.equal((await getDocs(query(collection(db, 'inventory_transactions'), where('source', '==', 'manual'), orderBy('transactionDate', 'desc')))).size, 3);
+});
+const scheduleData = (id = 'task', uid = 'field', patch = {}) => ({id, title: 'Pemberian pakan', moduleType: 'lele',
+  type: 'pakan', date: now, status: 'pending', notes: '', batchId: null, isDeleted: false,
+  createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...patch});
+async function seedSchedule(patch = {}) {
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'schedules/task'), scheduleData('task', 'field', patch)));
+}
+async function finish(db, status = 'done', uid = 'field') {
+  return retryTransaction(db, async tx => {
+    const ref = doc(db, 'schedules/task'), old = await tx.get(ref);
+    if (old.data().status === status) return;
+    if (old.data().status !== 'pending') throw new Error('Status berubah');
+    tx.update(ref, {status, updatedBy: uid, updatedAt: serverTimestamp(),
+      ...(status === 'done' ? {completedBy: uid, completedAt: serverTimestamp()} : {skippedBy: uid, skippedAt: serverTimestamp(), skipReason: 'Hujan'})});
+  });
+}
+test('phase04 schedule active matching batch accepted; missing, planned, completed, archived, deleted or mismatch rejected', async () => {
+  const db = dbFor('field');
+  await seedBatch();
+  await assertSucceeds(setDoc(doc(db, 'schedules/valid'), scheduleData('valid', 'field', {batchId: 'KOLAM-A'})));
+  for (const patch of [{moduleType: 'ayam_kampung'}, {status: 'planned'}, {status: 'completed'}, {status: 'archived'}, {isDeleted: true}]) {
+    await seedBatch(patch);
+    await assertFails(setDoc(doc(db, 'schedules/invalid'), scheduleData('invalid', 'field', {batchId: 'KOLAM-A'})));
+  }
+  await assertFails(setDoc(doc(db, 'schedules/missing'), scheduleData('missing', 'field', {batchId: 'MISSING'})));
+});
+test('phase04 legacy schedule without batch can be read and completed after batch is closed', async () => {
+  await seedSchedule(); const db = dbFor('field');
+  await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'schedules/task'), {batchId: 'KOLAM-A'}));
+  await seedBatch({status: 'completed'});
+  await assertSucceeds(getDoc(doc(db, 'schedules/task')));
+  await assertSucceeds(finish(db));
+});
+test('phase04 done records actor and timestamp once; repeated taps do not replace first completion', async () => {
+  await seedSchedule(); const db = dbFor('field');
+  await finish(db); const before = (await getDoc(doc(db, 'schedules/task'))).data();
+  await finish(dbFor('admin'), 'done', 'admin');
+  const after = (await getDoc(doc(db, 'schedules/task'))).data();
+  assert.equal(after.completedBy, 'field'); assert(after.completedAt.isEqual(before.completedAt));
+  assert.equal((await getDocs(collection(db, 'inventory_transactions'))).size, 0);
+  assert.equal((await getDocs(collection(db, 'logbooks'))).size, 1);
+});
+test('phase04 skipped records actor, reason and timestamp; stale opposite status cannot overwrite', async () => {
+  await seedSchedule(); const db = dbFor('field'); await finish(db, 'skipped');
+  const data = (await getDoc(doc(db, 'schedules/task'))).data();
+  assert.equal(data.skippedBy, 'field'); assert.equal(data.skipReason, 'Hujan'); assert(data.skippedAt instanceof Timestamp);
+  await assert.rejects(finish(db, 'done'), /Status berubah/);
+  await assertFails(updateDoc(doc(db, 'schedules/task'), {status: 'pending', updatedBy: 'field', updatedAt: serverTimestamp()}));
+});
+test('phase04 simultaneous conflicting checklist decisions preserve one terminal state', async () => {
+  await seedSchedule(); const db = dbFor('field');
+  const results = await Promise.allSettled([finish(db), finish(dbFor('admin'), 'skipped', 'admin')]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  const d = (await getDoc(doc(db, 'schedules/task'))).data();
+  assert(['done','skipped'].includes(d.status));
+});
+test('phase04 forged schedule audit, direct terminal create, arbitrary fields and missing completion rejected', async () => {
+  await seedSchedule(); const db = dbFor('admin');
+  for (const patch of [{createdBy: 'admin'}, {createdAt: serverTimestamp()}, {completedBy: 'admin'},
+    {status: 'done'}, {status: 'done', completedBy: 'field', completedAt: serverTimestamp()},
+    {status: 'done', completedBy: 'admin', completedAt: now}, {status: 'skipped'}, {arbitrary: 'field'}]) {
+    await assertFails(updateDoc(doc(db, 'schedules/task'), {...patch, updatedBy: 'admin', updatedAt: serverTimestamp()}));
+  }
+  await assertFails(setDoc(doc(db, 'schedules/terminal'), scheduleData('terminal', 'admin', {status: 'done'})));
+});
+test('phase04 schedule edit updates time, validates batch and retains creator; only admin soft deletes pending', async () => {
+  await seedSchedule(); const db = dbFor('field');
+  await assertSucceeds(updateDoc(doc(db, 'schedules/task'), {date: Timestamp.fromMillis(now.toMillis()+3600000), updatedBy: 'field', updatedAt: serverTimestamp()}));
+  await assertFails(updateDoc(doc(db, 'schedules/task'), {batchId: 'MISSING', updatedBy: 'field', updatedAt: serverTimestamp()}));
+  await assertFails(updateDoc(doc(db, 'schedules/task'), {isDeleted: true, updatedBy: 'field', updatedAt: serverTimestamp()}));
+  await assertSucceeds(updateDoc(doc(dbFor('admin'), 'schedules/task'), {isDeleted: true, updatedBy: 'admin', updatedAt: serverTimestamp()}));
+  await assertFails(deleteDoc(doc(dbFor('admin'), 'schedules/task')));
+});
+test('phase04 schedule status/date/batch queries paginate and filter', async () => {
+  await seedBatch(); const db = dbFor('field');
+  for (let i=0;i<3;i++) await setDoc(doc(db, `schedules/q-${i}`), scheduleData(`q-${i}`, 'field', {batchId:'KOLAM-A'}));
+  const q = query(collection(db, 'schedules'), where('isDeleted','==',false), where('status','==','pending'), where('batchId','==','KOLAM-A'), where('date','<', Timestamp.fromMillis(now.toMillis()+1)), orderBy('date'), limit(2));
+  const first=await getDocs(q), next=await getDocs(query(q,startAfter(first.docs.at(-1))));
+  assert.equal(first.size,2); assert.equal(next.size,1);
+});
+
+test('phase04 largest chicken logbook with four inventory items, batch and alerts fits Rules access budget', async () => {
+  await seedBatch({moduleType:'ayam_kampung'}); const db=dbFor('field');
+  await assertSucceeds(retryTransaction(db, async tx => {
+    const id='max-items', log=doc(db,'logbooks',id);
+    const actions=[['dedak_padi',5,'out','kg'],['talas_pepaya',2,'out','kg'],['maggot_segar',1,'out','kg'],['telur_ayam',3,'in','butir']];
+    const refs=actions.map(([key]) => doc(db,'inventory',`logbook_${key}`));
+    for(const ref of refs) await tx.get(ref);
+    tx.set(log,{...entry(id),batchId:'KOLAM-A',createdBy:'field',updatedBy:'field',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    for(const [i,[key,qty,type,unit]] of actions.entries()) {
+      const tid=`${id}-${key}`,after=type==='out'?-qty:qty;
+      tx.set(refs[i],{...stockData(refs[i].id,after), name:key,itemKey:key,moduleType:'ayam_kampung',unit,lastTransactionId:tid,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+      tx.set(doc(db,'inventory_transactions',tid),{id:tid,requestId:id,itemId:refs[i].id,itemName:key,itemKey:key,moduleType:'ayam_kampung',
+        logbookId:id,batchId:'KOLAM-A',type,quantity:qty,unit,beforeStock:0,afterStock:after,notes:'Otomatis dari logbook',source:'logbook',
+        transactionDate:serverTimestamp(),createdBy:'field',createdAt:serverTimestamp(),isReversed:false});
+      if(type==='out') tx.set(doc(db,'notifications',`low_stock_field_${refs[i].id}`),{id:`low_stock_field_${refs[i].id}`,title:'Stok rendah',body:'Saat diperiksa',
+        type:'low_stock',targetRole:'admin',userId:'field',relatedCollection:'inventory',relatedId:refs[i].id,isRead:false,createdAt:serverTimestamp(),isDeleted:false});
+    }
+    tx.set(doc(db,'production_results',id),{id,logbookId:id,batchId:'KOLAM-A',quantity:3,unit:'butir',createdBy:'field',createdAt:serverTimestamp()});
+  }));
+  assert.equal((await getDocs(query(collection(db,'inventory_transactions'),where('logbookId','==','max-items')))).size,4);
+});
+
+test('phase04 unknown role and conflicting inactive legacy flag cannot read operational data', async () => {
+  await seedStock(); await seedSchedule();
+  for(const [uid,profile] of [['unknown',{role:'unknown',isActive:true}], ['legacy-inactive',{role:'admin',isActive:true,is_active:false}]]) {
+    await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'users',uid),profile));
+    const db=dbFor(uid);
+    for(const path of ['inventory/feed','inventory_transactions/missing','schedules/task']) await assertFails(getDoc(doc(db,path)));
   }
 });

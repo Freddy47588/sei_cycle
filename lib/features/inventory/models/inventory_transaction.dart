@@ -4,6 +4,8 @@ import '../../../core/utils/firestore_fields.dart';
 
 class InventoryTransaction {
   const InventoryTransaction({
+    this.batchId,
+    this.source = '',
     required this.id,
     required this.itemId,
     required this.itemName,
@@ -24,6 +26,8 @@ class InventoryTransaction {
     required this.reversedBy,
   });
 
+  final String? batchId;
+  final String source;
   final String id;
   final String itemId;
   final String itemName;
@@ -49,7 +53,11 @@ class InventoryTransaction {
     final data = document.data() ?? const <String, dynamic>{};
     final reversedValue = fieldValue(data, const ['reversedAt']);
     return InventoryTransaction(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
+      batchId: data['batchId'] as String?,
+      source: stringField(data, const [
+        'source',
+      ], fallback: data['logbookId'] == null ? 'legacy' : 'logbook'),
       itemId: stringField(data, const ['itemId']),
       itemName: stringField(data, const ['itemName']),
       itemKey: stringField(data, const ['itemKey']),

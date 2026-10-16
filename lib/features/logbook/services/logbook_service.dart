@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../../../core/utils/firestore_validators.dart';
+import '../../../core/utils/operational_auth.dart';
 import '../../inventory/services/inventory_service.dart';
+import '../../inventory/services/inventory_transaction_service.dart';
+import '../../schedule/services/schedule_service.dart';
 import '../models/logbook_entry.dart';
 import '../models/logbook_form_spec.dart';
 import '../models/logbook_page.dart';
@@ -20,10 +23,17 @@ class LogbookService {
 
   final FirebaseFirestore _firestore;
   final Uuid _uuid;
+  ScheduleService get schedules => ScheduleService(firestore: _firestore);
+  Future<AppUser?> operationalProfile(String id) async {
+    final doc = await _firestore.collection('users').doc(id).get();
+    return doc.exists ? AppUser.fromDocument(doc) : null;
+  }
+
+  InventoryTransactionService get inventoryHistory =>
+      InventoryTransactionService(firestore: _firestore);
   BatchService get batches => BatchService(firestore: _firestore);
   late final InventoryService _inventoryService = InventoryService(
     firestore: _firestore,
-    uuid: _uuid,
   );
 
   CollectionReference<Map<String, dynamic>> get _collection =>
@@ -179,7 +189,7 @@ class LogbookService {
         data['details'] is Map &&
         mapEquals(Map<String, dynamic>.from(data['details'] as Map), details);
     try {
-      await _firestore.runTransaction((transaction) async {
+      await runOperationalTransaction(_firestore, (transaction) async {
         final existing = await transaction.get(_collection.doc(logbookId));
         if (existing.exists) {
           final data = existing.data()!;
@@ -295,13 +305,16 @@ class LogbookService {
             final shouldCreateNotification =
                 !notification.exists ||
                 notificationData?['isDeleted'] == true ||
-                notificationData?['isRead'] == true;
+                notificationData?['body'] !=
+                    'Saat diperiksa: ${_number(afterStock)} ${action.unit}, minimum ${_number(minStock)} ${action.unit}. Buka Inventaris untuk kondisi terbaru.';
             if (shouldCreateNotification) {
               transaction.set(notificationRef, {
                 'id': notificationRef.id,
-                'title': 'Stok ${action.itemName} rendah',
+                'title': afterStock <= 0
+                    ? 'Stok ${action.itemName} habis'
+                    : 'Stok ${action.itemName} rendah',
                 'body':
-                    'Stok ${action.itemName} menipis. Sisa ${_number(afterStock)} ${action.unit}.',
+                    'Saat diperiksa: ${_number(afterStock)} ${action.unit}, minimum ${_number(minStock)} ${action.unit}. Buka Inventaris untuk kondisi terbaru.',
                 'type': 'low_stock',
                 'targetRole': 'admin',
                 'userId': userId,
@@ -311,6 +324,15 @@ class LogbookService {
                 'createdAt': now,
                 'isDeleted': false,
               }, SetOptions(merge: true));
+            }
+          } else {
+            final priorAlert = notificationSnapshots[target]!;
+            if (priorAlert.exists && priorAlert.data()?['isDeleted'] != true) {
+              transaction.update(priorAlert.reference, {
+                'isDeleted': true,
+                'updatedBy': userId,
+                'updatedAt': now,
+              });
             }
           }
         }

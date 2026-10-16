@@ -7,7 +7,7 @@ class LocalReminderService {
     : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   final FlutterLocalNotificationsPlugin _plugin;
-  static bool _initialized = false;
+  bool _initialized = false;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -15,8 +15,16 @@ class LocalReminderService {
 
     const settings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      iOS: DarwinInitializationSettings(),
-      macOS: DarwinInitializationSettings(),
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+      macOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
     );
     await _plugin.initialize(settings: settings);
     _initialized = true;
@@ -40,7 +48,7 @@ class LocalReminderService {
         >()
         ?.requestPermissions(alert: true, badge: true, sound: true);
 
-    return androidGranted ?? iosGranted ?? macGranted ?? true;
+    return androidGranted ?? iosGranted ?? macGranted ?? false;
   }
 
   Future<void> scheduleScheduleReminder({
@@ -53,10 +61,10 @@ class LocalReminderService {
     await initialize();
 
     await _plugin.zonedSchedule(
-      id: _stableId(scheduleId),
+      id: stableReminderId(scheduleId),
       title: title,
       body: body ?? 'Pengingat jadwal operasional SeiCycle.',
-      scheduledDate: tz.TZDateTime.from(scheduledAt, tz.local),
+      scheduledDate: tz.TZDateTime.from(scheduledAt, tz.UTC),
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'seicycle_schedule_reminders',
@@ -75,7 +83,25 @@ class LocalReminderService {
 
   Future<void> cancelScheduleReminder(String scheduleId) async {
     await initialize();
-    await _plugin.cancel(id: _stableId(scheduleId));
+    await _plugin.cancel(id: stableReminderId(scheduleId));
+  }
+
+  Future<Set<String>> pendingScheduleIds() async {
+    await initialize();
+    final requests = await _plugin.pendingNotificationRequests();
+    final ids = <String>{};
+    for (final request in requests.where(
+      (r) => r.payload?.startsWith('schedule:') == true,
+    )) {
+      final id = request.payload!.substring(9);
+      if (request.id != stableReminderId(id)) {
+        // Retire reminders installed by the legacy hashCode implementation.
+        await _plugin.cancel(id: request.id);
+      } else {
+        ids.add(id);
+      }
+    }
+    return ids;
   }
 
   Future<void> cancelAll() async {
@@ -84,4 +110,11 @@ class LocalReminderService {
   }
 }
 
-int _stableId(String value) => value.hashCode & 0x7fffffff;
+// Bounded DJB2: exact integer math on native Dart and JavaScript.
+int stableReminderId(String value) {
+  var hash = 5381;
+  for (final unit in value.codeUnits) {
+    hash = ((hash * 33) ^ unit) & 0x7fffffff;
+  }
+  return hash & 0x7fffffff;
+}

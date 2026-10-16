@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../inventory/screen/inventory_history_screen.dart';
+import '../../schedule/screen/schedule_screen.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../logbook/services/logbook_service.dart';
 import '../models/cultivation_batch.dart';
@@ -184,6 +186,61 @@ class _BatchDetailScreenState extends State<BatchDetailScreen> {
                     ],
                   ),
                 const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => InventoryHistoryScreen(
+                        userId: widget.userId,
+                        canEdit: widget.canManage,
+                        field: 'batchId',
+                        value: b.id,
+                        service: widget.logbookService.inventoryHistory,
+                        logbookService: widget.logbookService,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.inventory_2_outlined),
+                  label: const Text('Mutasi Stok Batch'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final profile = await widget.logbookService
+                          .operationalProfile(widget.userId);
+                      if (!context.mounted) return;
+                      if (profile == null || !profile.canViewSchedules) {
+                        throw StateError('Tidak memiliki akses jadwal.');
+                      }
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => Scaffold(
+                            appBar: AppBar(title: const Text('Jadwal Batch')),
+                            body: ScheduleScreen(
+                              profile: profile,
+                              batchId: b.id,
+                              service: widget.logbookService.schedules,
+                              logbooks: widget.logbookService,
+                            ),
+                          ),
+                        ),
+                      );
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Jadwal batch belum dapat dibuka: $error',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.event_note_outlined),
+                  label: const Text('Jadwal Batch'),
+                ),
                 BatchActivities(
                   key: ValueKey(_revision),
                   batchId: b.id,

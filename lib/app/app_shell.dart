@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../features/schedule/services/reminder_sync_service.dart';
 import 'package:intl/intl.dart';
 
 import '../features/dashboard/screen/dashboard_screen.dart';
@@ -32,19 +34,49 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
+  ReminderSyncService? _reminderSync;
   int _selectedIndex = 0;
   late final Stream<int> _unreadCountStream;
 
   @override
   void initState() {
     super.initState();
+    if (widget.pageBuilder == null && widget.profile.isActive) {
+      WidgetsBinding.instance.addObserver(this);
+      _reminderSync = ReminderSyncService();
+      unawaited(_syncReminders());
+    }
     _unreadCountStream =
         widget.unreadCountStream ??
         NotificationService().watchUnreadCount(
           userId: widget.profile.uid,
           role: widget.profile.effectiveRole,
         );
+  }
+
+  Future<void> _syncReminders() async {
+    final message = await _reminderSync?.sync();
+    if (mounted && message != null && !message.contains('disinkronkan')) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_syncReminders());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Prevent reminders for the previous account surviving a logout.
+    unawaited(
+      _reminderSync?.clear().catchError((Object _) {}) ?? Future<void>.value(),
+    );
+    super.dispose();
   }
 
   List<_Destination> get _destinations => <_Destination>[

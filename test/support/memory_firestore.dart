@@ -7,6 +7,7 @@ class MemoryFirestore implements FirebaseFirestore {
   final queries = <String>[];
   bool failCommit = false;
   bool commitThenDeny = false;
+  bool denyNextCommittedWrite = false;
   bool retryOnce = false;
   void Function()? beforeRetry;
   int _id = 0;
@@ -29,7 +30,8 @@ class MemoryFirestore implements FirebaseFirestore {
     }
     if (failCommit) throw StateError('Injected commit failure');
     documents.addAll(tx.pending);
-    if (commitThenDeny) {
+    if (commitThenDeny || denyNextCommittedWrite) {
+      denyNextCommittedWrite = false;
       throw FirebaseException(
         plugin: 'cloud_firestore',
         code: 'permission-denied',
@@ -67,7 +69,8 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
   @override
   dynamic noSuchMethod(Invocation invocation) {
     if (invocation.memberName == #where) {
-      final key = invocation.positionalArguments.first as String;
+      final rawKey = invocation.positionalArguments.first;
+      final key = rawKey is String ? rawKey : 'id';
       final args = invocation.namedArguments;
       return MemoryCollection(
         database,
@@ -75,6 +78,9 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
         [
           ...predicates,
           (data) {
+            if (args[#whereIn] != null) {
+              return (args[#whereIn] as Iterable).contains(data[key]);
+            }
             if (args[#isEqualTo] != null) return data[key] == args[#isEqualTo];
             final value = data[key] as Timestamp;
             if (args[#isGreaterThanOrEqualTo] != null) {
@@ -91,6 +97,9 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
         order,
         descending,
       );
+    }
+    if (invocation.memberName == #snapshots) {
+      return get().asStream();
     }
     if (invocation.memberName == #limit) {
       return MemoryCollection(
@@ -140,9 +149,7 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
       rows.sort((a, b) {
         final primary = order == null
             ? 0
-            : (a.value[order] as Timestamp).compareTo(
-                b.value[order] as Timestamp,
-              );
+            : (a.value[order] as Comparable).compareTo(b.value[order]);
         final result = primary == 0 ? a.key.compareTo(b.key) : primary;
         return descending ? -result : result;
       });

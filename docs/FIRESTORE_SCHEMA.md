@@ -367,3 +367,24 @@ ID bawaan form adalah `B-<UUID-v4>` uppercase. Pengguna dapat memasukkan kode pe
 `logbooks.batchId` opsional untuk kompatibilitas/aktivitas umum. Bila disertakan harus string ID batch aktif, tidak dihapus, dan moduleType sama. Rules menggunakan kondisi sesudah transaksi (`getAfter`) untuk mencegah penyelesaian batch bersamaan dengan create Logbook. Update notes ber-audit tidak dapat mengganti batchId.
 
 Write Logbook baru meneruskan batchId ke `inventory_transactions` dan `production_results` bila relevan; `logbookId` tetap relasi utama dan data lama ditelusuri melalui logbookId. Jangan menggandakan hasil produksi dengan menjumlahkan hasil stok masuk dan production_results. Batch tidak menampung daftar aktivitas atau agregat populasi/panen fiktif.
+
+## Phase 04: saldo, ledger dan checklist
+
+`inventory.currentStock` tetap saldo lokasi. Master menambah `lastTransactionId` pada mutasi, dan `creationPayload` immutable pada pembuatan manual untuk retry. Nama/kategori/lokasi/minimum dapat diperbarui tanpa stok. Unit, itemKey, moduleType, pencipta dan waktu penciptaan tetap. Nonzero opening memerlukan histori `opening_{itemId}` dalam commit yang sama. Soft delete hanya admin pada saldo nol.
+
+`inventory_transactions` mempertahankan field canonical `id`, `itemId`, `itemName`, `itemKey`, `moduleType`, `type`, `quantity`, `unit`, `beforeStock`, `afterStock`, `notes`, `transactionDate`, `createdBy`, `createdAt`, optional batchId/logbookId dan reversal legacy. Tambahan:
+
+| Field | Kontrak |
+| --- | --- |
+| type | in, out, correction (absolut), opening; in/out lama tetap terbaca |
+| source | manual, opening, logbook; dokumen lama tanpa source ditafsirkan untuk tampilan |
+| requestId | ID receipt manual; ID master pada opening; ID Logbook pada source logbook |
+| requestedValue | Input manual: delta positif untuk in/out, nilai stok fisik untuk correction |
+| allowNegative | Izin eksplisit pengguna bila saldo manual menjadi minus |
+| quantity koreksi | abs(afterStock-beforeStock), boleh nol untuk observasi fisik yang sama |
+
+Ledger baru selalu immutable dan isReversed=false. Reversal lama tetap dapat dibaca dan ditandai; API rollback/reversal tidak aktif. Rules mensyaratkan lastTransactionId barang menunjuk ledger baru yang sesuai, baik mutasi manual maupun Logbook. Tidak ada migrasi ledger lama atau saldo per batch.
+
+`schedules` mempertahankan id/title/moduleType/type/date/status/notes/createdBy/createdAt/updatedBy/updatedAt/isDeleted. Tambahan opsional: batchId nullable, creationPayload immutable, completedBy/completedAt, skippedBy/skippedAt/skipReason. Baru selalu pending; terminal done/skipped mencatat pengguna dan server timestamp dalam transaksi. Edit hanya pending dengan deteksi versi. Batch baru harus active/cocok modul/tidak dihapus; pembacaan dan penyelesaian jadwal lama tetap diperbolehkan setelah batch ditutup. Tidak menambah linkedLogbookId atau recurrence pada Phase 04.
+
+Kontrak/risiko selengkapnya: [Inventaris & Jadwal Phase 04](PHASE_04_INVENTORY_SCHEDULE.md). Pengelola perlu menerapkan Rules/index yang sudah ditinjau sebelum client baru dipakai; client lama yang menulis stok langsung akan ditolak.

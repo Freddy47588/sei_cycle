@@ -54,6 +54,28 @@ Admin dan operator lapangan aktif dapat mengelola batch; operator keuangan serta
 
 Rules dan sembilan index tambahan Phase 03 perlu ditinjau dan diterapkan secara manual oleh pengelola sebelum fitur digunakan pada lingkungan tujuan. Tidak ada deployment otomatis. Lihat [Phase 03](docs/PHASE_03_BATCH_MANAGEMENT.md) untuk kontrak transaksi, hasil pengujian dan batas verifikasi.
 
+## Manajemen Inventaris
+
+Buka **Lainnya > Inventaris** untuk mencari barang, memfilter modul/kategori, melihat stok aman/rendah/habis, dan mengurutkan data yang sudah dimuat. Daftar dibaca per 20 barang; indikator stok barang yang dimuat mengikuti pembaruan data. Pencarian, status stok, dan urutan tambahan hanya mencakup data yang dimuat, bukan total seluruh persediaan.
+
+- **Tambah Barang** mengisi identitas, lokasi, satuan, minimum stok, dan Stok Awal opsional. Saldo awal dan historinya disimpan bersama.
+- **Edit Master** mengubah nama, kategori, lokasi, dan batas minimum tanpa mengubah saldo. Item key, modul, dan satuan dipertahankan setelah pembuatan agar histori tetap konsisten.
+- **Mutasi Stok** menyediakan Stok Masuk, Stok Keluar, serta Koreksi Stok berdasarkan jumlah fisik aktual. Catatan/alasan wajib; stok minus membutuhkan persetujuan eksplisit. Kegagalan simpan mempertahankan isian dan ID permintaan untuk retry.
+- **Riwayat Mutasi** menampilkan sebelum/sesudah, kuantitas, sumber, waktu, pengguna, serta relasi batch/Logbook dengan pagination. Histori juga dapat dibuka dari Detail Logbook dan Detail Batch.
+- Pemakaian/produksi yang sudah disimpan melalui **Logbook** tidak perlu dicatat ulang sebagai mutasi manual. Stok merupakan persediaan lokasi; batch hanya atribusi kegiatan, bukan saldo fisik terpisah.
+
+Peringatan stok rendah memakai ID notifikasi tetap dan tidak membuka ulang informasi identik yang sudah dibaca. Stok habis dibedakan dari stok rendah; pesan notifikasi menjelaskan kondisi saat pemeriksaan dan mengarahkan pengguna ke Inventaris untuk kondisi terbaru. Penghapusan master hanya tersedia bagi admin ketika stok nol; histori tetap disimpan.
+
+## Jadwal Operasional
+
+Buka **Lainnya > Jadwal**, atau **Detail Batch > Jadwal Batch**. Buat kegiatan per modul, pilih batch aktif yang sesuai secara eksplisit, atau gunakan **Tanpa Batch — Aktivitas Umum**. Isi jenis aktivitas, waktu perangkat, dan catatan. Daftar memiliki tampilan **Hari Ini, Mendatang, Terlewat, Selesai, Semua Jadwal**, filter modul/tanggal, serta pagination.
+
+**Tandai Selesai** dan **Lewati** merupakan keputusan petugas dan menyimpan pengguna serta waktu pelaksanaan. Jadwal selesai/dilewati menjadi histori; pembukaan form atau munculnya pengingat tidak menyelesaikan kegiatan. **Catat di Logbook** membuka modul dan konteks batch yang masih aktif, menampilkan kegiatan yang dirujuk, dan tetap meminta pengamatan serta Simpan Catatan dari pengguna. Aksi ini tidak membuat catatan otomatis atau mengurangi stok.
+
+Pengingat lokal disinkronkan saat login, aplikasi kembali aktif, sesudah perubahan jadwal, atau lewat **Sinkronkan Pengingat**. Perubahan waktu mengganti pengingat; selesai/dilewati/hapus membatalkannya. Izin perangkat yang ditolak tidak membatalkan penyimpanan jadwal. Pesan hasil penyimpanan dan hasil pengingat ditampilkan terpisah agar retry pengingat tidak membuat jadwal kedua.
+
+Sinkronisasi dibatasi maksimal 50 jadwal pending dalam 14 hari. Android memakai pengingat waktu perkiraan sesuai kebijakan perangkat. Tidak ada penjadwal push server atau jadwal berulang otomatis; recurrence belum diaktifkan. Admin/operator lapangan aktif dapat mengelola, sedangkan operator keuangan dan role pembaca hanya melihat. Rules dan index Phase 04 harus ditinjau serta diterapkan manual sebelum fitur digunakan pada project tujuan. Lihat [Phase 04](docs/PHASE_04_INVENTORY_SCHEDULE.md) untuk kontrak, pengujian, dan batasannya.
+
 ## Instalasi dan konfigurasi
 
 Prasyarat: Flutter stable, Dart sesuai `pubspec.yaml`, project Firebase, dan perangkat/emulator. Versi pengujian Phase 01: Flutter 3.44.2, Dart 3.12.2.
@@ -118,6 +140,7 @@ docs/                Dokumentasi implementasi
 ```
 
 - [Logbook Management Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md)
+- [Inventaris & Jadwal Phase 04](docs/PHASE_04_INVENTORY_SCHEDULE.md)
 - [Arsitektur backend](docs/BACKEND.md)
 - [Schema Cloud Firestore](docs/FIRESTORE_SCHEMA.md)
 - [ERD](docs/ERD.md)

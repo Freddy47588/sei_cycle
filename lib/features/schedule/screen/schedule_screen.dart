@@ -1,614 +1,438 @@
 import 'package:flutter/material.dart';
-
 import '../../../core/constants/farm_modules.dart';
-import '../../../core/services/local_reminder_service.dart';
 import '../../../core/utils/delete_confirmation.dart';
 import '../../../core/utils/formatters.dart';
-import '../../../core/utils/operation_feedback.dart';
 import '../../../core/widgets/app_ui.dart';
-import '../../../core/widgets/async_state_widgets.dart';
 import '../../../core/widgets/feature_page.dart';
+import '../../../core/widgets/firestore_paged_list.dart';
 import '../../../theme/app_theme.dart';
 import '../../profile/models/app_user.dart';
+import '../../logbook/screen/logbook_screen.dart';
+import '../../logbook/services/logbook_service.dart';
 import '../../notification/services/notification_service.dart';
 import '../models/schedule_item.dart';
+import '../models/schedule_filter.dart';
 import '../services/schedule_service.dart';
+import '../services/reminder_sync_service.dart';
+import '../widgets/schedule_form.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({required this.profile, super.key});
-
+  const ScheduleScreen({
+    required this.profile,
+    this.service,
+    this.reminders,
+    this.logbooks,
+    this.notifications,
+    this.batchId,
+    super.key,
+  });
   final AppUser profile;
-
+  final ScheduleService? service;
+  final ReminderSyncService? reminders;
+  final LogbookService? logbooks;
+  final NotificationService? notifications;
+  final String? batchId;
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
-  late final ScheduleService _service;
-  final Set<String> _syncedOverdueAlertIds = {};
+  late final _service = widget.service ?? ScheduleService();
+  late final _reminders =
+      widget.reminders ?? ReminderSyncService(schedules: _service);
+  late ScheduleView _view = widget.batchId == null
+      ? ScheduleView.today
+      : ScheduleView.all;
+  String? _moduleType;
   DateTime? _date;
-
-  @override
-  void initState() {
-    super.initState();
-    _service = ScheduleService();
+  int _revision = 0;
+  final _busy = <String>{};
+  bool _syncing = false;
+  String _reminderMessage =
+      'Pengingat lokal diperiksa saat login, aplikasi aktif, atau sinkronisasi. Waktu mengikuti perangkat.';
+  void _message(String text) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    }
   }
 
-  Future<void> _openForm([ScheduleItem? item]) async {
-    final value = await showDialog<_ScheduleFormValue>(
+  Future<void> _sync() async {
+    if (!mounted || _syncing) return;
+    setState(() => _syncing = true);
+    final message = await _reminders.sync();
+    if (mounted) {
+      setState(() {
+        _reminderMessage = message;
+        _syncing = false;
+      });
+      _message(message);
+    }
+  }
+
+  Future<void> _afterChange(String id) async {
+    // Cancel the old device time even if a following Firestore read fails.
+    try {
+      await _reminders.cancel(id);
+    } catch (_) {
+      /* sync reports device failures below. */
+    }
+    await _sync();
+  }
+
+  Future<void> _form([ScheduleItem? item]) async {
+    final id = await showDialog<String>(
       context: context,
-      builder: (_) => _ScheduleFormDialog(item: item),
-    );
-    if (value == null || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () async {
-        final scheduleId = await _service.save(
-          id: item?.id,
-          title: value.title,
-          moduleId: value.moduleId,
-          scheduleType: value.scheduleType,
-          scheduledAt: value.scheduledAt,
-          status: value.status,
-          note: value.note,
-          userId: widget.profile.uid,
-        );
-        await NotificationService().createProductionReminder(
-          scheduleId: scheduleId,
-          title: value.title,
-          userId: widget.profile.uid,
-          role: widget.profile.effectiveRole,
-          scheduledAt: value.scheduledAt,
-        );
-        if (value.status == 'pending') {
-          await LocalReminderService().scheduleScheduleReminder(
-            scheduleId: scheduleId,
-            title: value.title,
-            scheduledAt: value.scheduledAt,
-            body: '${value.scheduleType} - ${value.note}'.trim(),
-          );
-        } else {
-          await LocalReminderService().cancelScheduleReminder(scheduleId);
-        }
-      },
-      successMessage: item == null
-          ? 'Jadwal ditambahkan.'
-          : 'Jadwal diperbarui.',
-    );
-  }
-
-  void _syncOverdueAlerts(List<ScheduleItem> schedules) {
-    if (!widget.profile.canManageSchedules) return;
-    final now = DateTime.now();
-    final overdue = schedules
-        .where(
-          (item) =>
-              item.status == 'pending' &&
-              item.scheduledAt.isBefore(now) &&
-              !_syncedOverdueAlertIds.contains(item.id),
-        )
-        .take(5)
-        .toList();
-    if (overdue.isEmpty) return;
-
-    _syncedOverdueAlertIds.addAll(overdue.map((item) => item.id));
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final notificationService = NotificationService();
-      for (final item in overdue) {
-        await notificationService.createScheduleOverdueAlert(
-          scheduleId: item.id,
-          title: item.title,
-          userId: widget.profile.uid,
-          role: widget.profile.effectiveRole,
-        );
-      }
-    });
-  }
-
-  Future<void> _pickFilterDate() async {
-    final result = await showDatePicker(
-      context: context,
-      initialDate: _date ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (result != null) setState(() => _date = result);
-  }
-
-  Future<void> _updateStatus(ScheduleItem item, String status) async {
-    await runOperationWithFeedback(
-      context,
-      operation: () async {
-        await _service.updateStatus(
-          item.id,
-          status,
-          userId: widget.profile.uid,
-        );
-        if (status == 'pending') {
-          await LocalReminderService().scheduleScheduleReminder(
-            scheduleId: item.id,
-            title: item.title,
-            scheduledAt: item.scheduledAt,
-            body: item.scheduleType,
-          );
-        } else {
-          await LocalReminderService().cancelScheduleReminder(item.id);
-        }
-      },
-      successMessage: 'Status jadwal diperbarui.',
-    );
-  }
-
-  Future<void> _delete(ScheduleItem item) async {
-    final confirmed = await confirmDelete(
-      context,
-      title: 'Hapus jadwal?',
-      message: 'Agenda ${item.title} akan dihapus dari kalender operasional.',
-    );
-    if (!confirmed || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () async {
-        await _service.delete(item.id, userId: widget.profile.uid);
-        await LocalReminderService().cancelScheduleReminder(item.id);
-      },
-      successMessage: 'Jadwal dihapus.',
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FeaturePage(
-      title: 'Kalender Operasional',
-      subtitle: 'Jadwal pakan, perawatan, pemupukan, dan panen Kebun Sei.',
-      actions: [
-        if (widget.profile.canManageSchedules)
-          FilledButton.icon(
-            onPressed: _openForm,
-            icon: const Icon(Icons.add),
-            label: const Text('Tambah jadwal'),
-          ),
-      ],
-      child: Column(
-        children: [
-          AppCard(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: ResponsiveFormRow(
-              breakpoint: 560,
-              children: [
-                Row(
-                  children: [
-                    const AppIconBox(
-                      icon: Icons.calendar_month_outlined,
-                      color: AppColors.primaryGreen,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _date == null
-                                ? 'Semua jadwal operasional'
-                                : shortDateFormat.format(_date!),
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _date == null
-                                ? 'Pilih tanggal untuk melihat agenda tertentu.'
-                                : 'Menampilkan agenda pada tanggal yang dipilih.',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: AppColors.textMuted),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _pickFilterDate,
-                        icon: const Icon(Icons.date_range_outlined),
-                        label: Text(_date == null ? 'Pilih tanggal' : 'Ganti'),
-                      ),
-                    ),
-                    if (_date != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        onPressed: () => setState(() => _date = null),
-                        icon: const Icon(Icons.close_rounded),
-                        tooltip: 'Hapus filter tanggal',
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          Expanded(
-            child: StreamBuilder<List<ScheduleItem>>(
-              stream: _service.watchSchedules(date: _date),
-              builder: (context, snapshot) {
-                final state = asyncSnapshotState(snapshot);
-                if (state != null) return state;
-                final schedules = snapshot.requireData;
-                _syncOverdueAlerts(schedules);
-                if (schedules.isEmpty) {
-                  return const EmptyState(
-                    title: 'Belum ada agenda pada periode ini',
-                    message:
-                        'Jadwal akan muncul setelah pengingat operasional pertama dibuat.',
-                    icon: Icons.event_note_outlined,
-                  );
-                }
-                return ListView.separated(
-                  itemCount: schedules.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) => _ScheduleCard(
-                    item: schedules[index],
-                    canEdit: widget.profile.canManageSchedules,
-                    canDelete: widget.profile.canDeleteSchedules,
-                    onEdit: () => _openForm(schedules[index]),
-                    onDelete: () => _delete(schedules[index]),
-                    onStatusChanged: (status) =>
-                        _updateStatus(schedules[index], status),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => ScheduleForm(
+        service: _service,
+        userId: widget.profile.uid,
+        item: item,
+        logbooks: widget.logbooks,
       ),
     );
+    if (id != null && mounted) {
+      _message('Jadwal tersimpan. Pengingat perangkat sedang disinkronkan.');
+      setState(() => _revision++);
+      await _afterChange(id);
+    }
   }
-}
 
-class _ScheduleCard extends StatelessWidget {
-  const _ScheduleCard({
-    required this.item,
-    required this.canEdit,
-    required this.canDelete,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onStatusChanged,
-  });
-
-  final ScheduleItem item;
-  final bool canEdit;
-  final bool canDelete;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final ValueChanged<String> onStatusChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _scheduleStatusColor(item);
-    return AppCard(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AppIconBox(icon: _scheduleStatusIcon(item), color: color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.title,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    StatusBadge(
-                      label: _scheduleStatusLabel(item),
-                      color: color,
-                      icon: _scheduleStatusIcon(item),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  dateTimeFormat.format(item.scheduledAt),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.textDark,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    StatusBadge(
-                      label: FarmModules.nameOf(item.moduleId),
-                      color: AppColors.primaryGreen,
-                    ),
-                    StatusBadge(
-                      label: item.scheduleType,
-                      color: AppColors.info,
-                    ),
-                  ],
-                ),
-                if (item.note.trim().isNotEmpty) ...[
-                  const SizedBox(height: 9),
-                  Text(
-                    item.note,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+  Future<void> _status(ScheduleItem item, String status) async {
+    if (_busy.contains(item.id)) return;
+    setState(() => _busy.add(item.id));
+    String reason = '';
+    if (status == 'skipped') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Lewati kegiatan'),
+          content: TextField(
+            onChanged: (value) => reason = value,
+            decoration: const InputDecoration(labelText: 'Alasan (opsional)'),
           ),
-          if (canEdit || canDelete)
-            PopupMenuButton<String>(
-              tooltip: 'Opsi jadwal',
-              onSelected: (value) {
-                if (value == 'edit') {
-                  onEdit();
-                  return;
-                }
-                if (value == 'delete') {
-                  onDelete();
-                  return;
-                }
-                onStatusChanged(value);
-              },
-              itemBuilder: (_) => <PopupMenuEntry<String>>[
-                if (canEdit) ...const [
-                  PopupMenuItem(
-                    value: 'pending',
-                    child: Text('Tandai menunggu'),
-                  ),
-                  PopupMenuItem(value: 'done', child: Text('Tandai selesai')),
-                  PopupMenuItem(
-                    value: 'skipped',
-                    child: Text('Tandai dilewati'),
-                  ),
-                  PopupMenuDivider(),
-                  PopupMenuItem(value: 'edit', child: Text('Edit jadwal')),
-                ],
-                if (canEdit && canDelete) const PopupMenuDivider(),
-                if (canDelete)
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Text('Hapus jadwal'),
-                  ),
-              ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Batal'),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScheduleFormValue {
-  const _ScheduleFormValue({
-    required this.title,
-    required this.moduleId,
-    required this.scheduleType,
-    required this.scheduledAt,
-    required this.status,
-    required this.note,
-  });
-
-  final String title;
-  final String moduleId;
-  final String scheduleType;
-  final DateTime scheduledAt;
-  final String status;
-  final String note;
-}
-
-class _ScheduleFormDialog extends StatefulWidget {
-  const _ScheduleFormDialog({this.item});
-
-  final ScheduleItem? item;
-
-  @override
-  State<_ScheduleFormDialog> createState() => _ScheduleFormDialogState();
-}
-
-class _ScheduleFormDialogState extends State<_ScheduleFormDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _title;
-  late final TextEditingController _type;
-  late final TextEditingController _note;
-  late String _moduleId;
-  late String _status;
-  late DateTime _scheduledAt;
-
-  @override
-  void initState() {
-    super.initState();
-    final item = widget.item;
-    _title = TextEditingController(text: item?.title);
-    _type = TextEditingController(text: item?.scheduleType);
-    _note = TextEditingController(text: item?.note);
-    _moduleId = item?.moduleId ?? FarmModules.ayamKampung.id;
-    _status = item?.status ?? 'pending';
-    _scheduledAt = item?.scheduledAt ?? DateTime.now();
-  }
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _type.dispose();
-    _note.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickDateTime() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _scheduledAt,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_scheduledAt),
-    );
-    if (time == null) return;
-    setState(() {
-      _scheduledAt = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        time.hour,
-        time.minute,
-      );
-    });
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(
-      context,
-      _ScheduleFormValue(
-        title: _title.text,
-        moduleId: _moduleId,
-        scheduleType: _type.text,
-        scheduledAt: _scheduledAt,
-        status: _status,
-        note: _note.text,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AppDialogShell(
-      title: widget.item == null ? 'Tambah Jadwal' : 'Edit Jadwal',
-      maxWidth: 500,
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _title,
-              decoration: const InputDecoration(
-                labelText: 'Judul agenda',
-                hintText: 'Contoh: pakan lele sore',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _moduleId,
-              decoration: const InputDecoration(labelText: 'Modul kebun'),
-              items: [
-                for (final module in FarmModules.values)
-                  DropdownMenuItem(value: module.id, child: Text(module.name)),
-              ],
-              onChanged: (value) => setState(() => _moduleId = value!),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _type,
-              decoration: const InputDecoration(
-                labelText: 'Jenis jadwal',
-                hintText: 'Pakan, perawatan, panen, atau lainnya',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            AppMenuCard(
-              icon: Icons.edit_calendar_outlined,
-              title: 'Waktu pelaksanaan',
-              subtitle: dateTimeFormat.format(_scheduledAt),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: _pickDateTime,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _status,
-              decoration: const InputDecoration(labelText: 'Status'),
-              items: const [
-                DropdownMenuItem(value: 'pending', child: Text('Menunggu')),
-                DropdownMenuItem(value: 'done', child: Text('Selesai')),
-                DropdownMenuItem(value: 'skipped', child: Text('Dilewati')),
-              ],
-              onChanged: (value) => setState(() => _status = value!),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _note,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Catatan',
-                hintText: 'Detail pelaksanaan atau kebutuhan (opsional)',
-              ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Tandai Dilewati'),
             ),
           ],
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Batal'),
+      );
+      if (confirmed != true || !mounted) {
+        if (mounted) setState(() => _busy.remove(item.id));
+        return;
+      }
+    }
+    try {
+      await _service.updateStatus(
+        item.id,
+        status,
+        userId: widget.profile.uid,
+        expectedUpdatedAt: item.updatedAt,
+        reason: reason,
+      );
+      _message(
+        status == 'done'
+            ? 'Kegiatan ditandai selesai.'
+            : 'Kegiatan ditandai dilewati.',
+      );
+      if (mounted) setState(() => _revision++);
+      await _afterChange(item.id);
+    } catch (e) {
+      _message('Status belum tersimpan: $e');
+    } finally {
+      if (mounted) setState(() => _busy.remove(item.id));
+    }
+  }
+
+  Future<void> _delete(ScheduleItem item) async {
+    if (!await confirmDelete(
+          context,
+          title: 'Hapus jadwal?',
+          message: 'Hapus kegiatan pending ini dari kalender?',
+        ) ||
+        !mounted) {
+      return;
+    }
+    try {
+      await _service.delete(
+        item.id,
+        userId: widget.profile.uid,
+        expectedUpdatedAt: item.updatedAt,
+      );
+      if (mounted) setState(() => _revision++);
+      _message('Jadwal dihapus.');
+      await _afterChange(item.id);
+    } catch (e) {
+      _message('Jadwal belum dihapus: $e');
+    }
+  }
+
+  Future<void> _record(ScheduleItem item) async {
+    final logs = widget.logbooks ?? LogbookService();
+    try {
+      final batch = item.batchId == null
+          ? null
+          : await logs.batches.getBatch(item.batchId!);
+      final valid =
+          batch != null &&
+          batch.status == 'active' &&
+          batch.input.moduleType == item.moduleId;
+      if (!mounted) return;
+      if (item.batchId != null && !valid) {
+        _message(
+          'Batch ${item.batchId} tidak aktif. Form dibuka tanpa batch; pilih konteks kegiatan secara eksplisit.',
+        );
+      }
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('Catat di Logbook')),
+            body: LogbookScreen(
+              profile: widget.profile,
+              service: logs,
+              initialModuleId: item.moduleId,
+              initialBatch: valid ? batch : null,
+              scheduleTitle: item.title,
+            ),
+          ),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Simpan')),
+      );
+    } catch (e) {
+      _message('Konteks Logbook belum dapat dibuka: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FeaturePage(
+    title: 'Kalender Operasional',
+    subtitle: widget.batchId == null
+        ? 'Checklist pakan, perawatan, pemupukan, dan panen Kebun Sei.'
+        : 'Jadwal Batch ${widget.batchId}',
+    actions: [
+      if (widget.profile.canManageSchedules)
+        FilledButton.icon(
+          onPressed: _form,
+          icon: const Icon(Icons.add),
+          label: const Text('Tambah jadwal'),
+        ),
+      IconButton(
+        onPressed: () => setState(() => _revision++),
+        tooltip: 'Muat ulang jadwal',
+        icon: const Icon(Icons.refresh),
+      ),
+    ],
+    child: Column(
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final view in ScheduleView.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(scheduleViewLabel(view)),
+                    selected: _view == view,
+                    labelStyle: TextStyle(
+                      color: _view == view
+                          ? Colors.white
+                          : AppColors.primaryGreen,
+                    ),
+                    onSelected: (_) => setState(() {
+                      _view = view;
+                      _date = null;
+                    }),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text('Modul, tanggal & pengingat perangkat'),
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _moduleType ?? '',
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Modul jadwal'),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('Semua Modul')),
+                for (final m in FarmModules.values)
+                  DropdownMenuItem(value: m.id, child: Text(m.name)),
+              ],
+              onChanged: (v) =>
+                  setState(() => _moduleType = v == '' ? null : v),
+            ),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate: _date ?? DateTime.now(),
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2100),
+                    );
+                    if (date != null && mounted) setState(() => _date = date);
+                  },
+                  icon: const Icon(Icons.date_range),
+                  label: Text(
+                    _date == null
+                        ? 'Pilih tanggal'
+                        : shortDateFormat.format(_date!),
+                  ),
+                ),
+                if (_date != null)
+                  TextButton(
+                    onPressed: () => setState(() => _date = null),
+                    child: const Text('Hapus tanggal'),
+                  ),
+                TextButton.icon(
+                  onPressed: _syncing ? null : _sync,
+                  icon: const Icon(Icons.notifications_active_outlined),
+                  label: Text(
+                    _syncing ? 'Menyinkronkan...' : 'Sinkronkan Pengingat',
+                  ),
+                ),
+              ],
+            ),
+            Text(_reminderMessage),
+          ],
+        ),
+        Expanded(
+          child: FirestorePagedList<ScheduleItem>(
+            idOf: (item) => item.id,
+            queryKey: (_view, _date, _revision, widget.batchId, _moduleType),
+            load: (cursor) => _service.fetchPage(
+              filter: ScheduleFilter(
+                view: _view,
+                date: _date,
+                batchId: widget.batchId,
+                moduleType: _moduleType,
+              ),
+              cursor: cursor,
+            ),
+            onLoaded: widget.profile.canManageSchedules
+                ? (items) async {
+                    final service =
+                        widget.notifications ?? NotificationService();
+                    for (final item
+                        in items
+                            .where(
+                              (s) =>
+                                  s.status == 'pending' &&
+                                  s.scheduledAt.isBefore(DateTime.now()),
+                            )
+                            .take(5)) {
+                      await service.createScheduleOverdueAlert(
+                        scheduleId: item.id,
+                        title: item.title,
+                        userId: widget.profile.uid,
+                        role: widget.profile.effectiveRole,
+                      );
+                    }
+                  }
+                : null,
+            itemBuilder: (item) => AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  StatusBadge(
+                    label: item.status == 'done'
+                        ? 'Selesai'
+                        : item.status == 'skipped'
+                        ? 'Dilewati'
+                        : item.scheduledAt.isBefore(DateTime.now())
+                        ? 'Terlewat'
+                        : 'Menunggu',
+                    color: item.status == 'done'
+                        ? AppColors.success
+                        : item.status == 'skipped'
+                        ? AppColors.textMuted
+                        : AppColors.primaryGreen,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${FarmModules.nameOf(item.moduleId)} - ${item.scheduleType}',
+                  ),
+                  Text(
+                    item.batchId == null
+                        ? 'Tanpa Batch \u2014 Aktivitas Umum'
+                        : 'Batch: ${item.batchId}',
+                  ),
+                  Text(dateTimeFormat.format(item.scheduledAt)),
+                  if (item.note.isNotEmpty)
+                    Text(
+                      item.note,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  if (item.completedAt != null)
+                    Text(
+                      'Selesai oleh ${item.completedBy} - ${dateTimeFormat.format(item.completedAt!)}',
+                    ),
+                  if (item.skippedAt != null)
+                    Text(
+                      'Dilewati oleh ${item.skippedBy} - ${dateTimeFormat.format(item.skippedAt!)} ${item.skipReason}',
+                    ),
+                  if (widget.profile.canManageSchedules)
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        if (item.status == 'pending') ...[
+                          FilledButton.tonal(
+                            onPressed: _busy.contains(item.id)
+                                ? null
+                                : () => _status(item, 'done'),
+                            child: const Text('Tandai Selesai'),
+                          ),
+                          TextButton(
+                            onPressed: _busy.contains(item.id)
+                                ? null
+                                : () => _status(item, 'skipped'),
+                            child: const Text('Lewati'),
+                          ),
+                          IconButton(
+                            onPressed: _busy.contains(item.id)
+                                ? null
+                                : () => _form(item),
+                            tooltip: 'Edit jadwal',
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                          if (widget.profile.canDeleteSchedules)
+                            IconButton(
+                              onPressed: _busy.contains(item.id)
+                                  ? null
+                                  : () => _delete(item),
+                              tooltip: 'Hapus jadwal',
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                        ],
+                        TextButton.icon(
+                          onPressed: () => _record(item),
+                          icon: const Icon(Icons.menu_book_outlined),
+                          label: const Text('Catat di Logbook'),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ],
-    );
-  }
+    ),
+  );
 }
-
-String _statusLabel(String status) => switch (status) {
-  'done' => 'Selesai',
-  'skipped' => 'Dilewati',
-  _ => 'Menunggu',
-};
-
-Color _scheduleStatusColor(ScheduleItem item) {
-  if (item.status == 'done') return AppColors.success;
-  if (item.status == 'skipped') return AppColors.textMuted;
-  if (_isOverdue(item)) return AppColors.error;
-  if (_isToday(item.scheduledAt)) return AppColors.primaryGreen;
-  return AppColors.warning;
-}
-
-IconData _scheduleStatusIcon(ScheduleItem item) {
-  if (item.status == 'done') return Icons.check_circle_outline;
-  if (item.status == 'skipped') return Icons.skip_next_outlined;
-  if (_isOverdue(item)) return Icons.event_busy_outlined;
-  if (_isToday(item.scheduledAt)) return Icons.today_outlined;
-  return Icons.schedule_outlined;
-}
-
-String _scheduleStatusLabel(ScheduleItem item) {
-  if (item.status == 'done' || item.status == 'skipped') {
-    return _statusLabel(item.status);
-  }
-  if (_isOverdue(item)) return 'Terlambat';
-  if (_isToday(item.scheduledAt)) return 'Hari ini';
-  return 'Mendatang';
-}
-
-bool _isOverdue(ScheduleItem item) {
-  return item.status == 'pending' && item.scheduledAt.isBefore(DateTime.now());
-}
-
-bool _isToday(DateTime value) {
-  final now = DateTime.now();
-  return value.year == now.year &&
-      value.month == now.month &&
-      value.day == now.day;
-}
-
-String? _required(String? value) =>
-    value == null || value.trim().isEmpty ? 'Wajib diisi' : null;

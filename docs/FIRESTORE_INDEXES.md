@@ -93,3 +93,20 @@ firebase deploy --only firestore:rules,firestore:indexes --project <project-yang
 ```
 
 Perintah ini adalah petunjuk untuk pengelola dan tidak dijalankan dalam pengerjaan Phase 03. Tunggu index selesai dibangun sebelum uji perangkat.
+
+## Phase 04: inventaris, histori dan checklist
+
+17 index tambahan mengikuti query yang benar-benar digunakan (76 definisi total):
+
+| Collection | Equality ASC | Urutan | Tambahan |
+| --- | --- | --- | --- |
+| inventory | isDeleted, opsional moduleType, opsional category | name ASC | 4 kombinasi |
+| inventory_transactions | batchId / type / source (satu filter) | transactionDate DESC | 3; itemId, logbookId, moduleType memakai index existing |
+| schedules | isDeleted, opsional batchId, opsional moduleType | date ASC | 3 baru; tanpa batch/modul sudah tersedia |
+| schedules | isDeleted, status, opsional batchId, opsional moduleType | date ASC/DESC | 7 baru; tanpa batch/modul ASC sudah tersedia |
+
+Rentang tanggal mengikuti field urutan, sehingga tidak menambah index terpisah. Status done/overdue memakai DESC; today/all/upcoming memakai ASC. Filter tanggal dapat digabung dengan tampilan/modul/batch. Histori hanya menerapkan satu equality pilihan bersama rentang tanggal; tidak membuat seluruh kombinasi filter yang belum digunakan.
+
+Inventaris/histori/jadwal memakai limit/cursor 20. Pencarian dan filter kondisi stok/urutan tambahan pada inventaris berlaku untuk hasil dimuat. Listener inventaris hanya menanyakan ID barang dari setiap halaman yang dimuat, tanpa composite index baru; dibatalkan pada reset/dispose. Query reminder memakai isDeleted=false, status=pending, rentang date 14 hari, limit 50, dengan index jadwal existing. Tidak ada hitungan global berdasarkan satu halaman.
+
+Definisi baseline dipertahankan dan tambahan diperiksa tanpa duplikasi. Emulator menguji kontrak query/cursor, bukan kesiapan index produksi. Rules/index Phase 04 tidak dideploy; pengelola harus meninjau dan menerapkannya secara manual pada project yang disetujui. Lihat [Phase 04](PHASE_04_INVENTORY_SCHEDULE.md).

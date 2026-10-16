@@ -12,7 +12,16 @@ import 'logbook_detail_screen.dart';
 import '../services/logbook_service.dart';
 
 class LogbookScreen extends StatefulWidget {
-  const LogbookScreen({required this.profile, this.service, super.key});
+  const LogbookScreen({
+    required this.profile,
+    this.service,
+    this.initialModuleId,
+    this.initialBatch,
+    this.scheduleTitle,
+    super.key,
+  });
+  final String? initialModuleId, scheduleTitle;
+  final CultivationBatch? initialBatch;
   final LogbookService? service;
 
   final AppUser profile;
@@ -37,7 +46,19 @@ class _LogbookScreenState extends State<LogbookScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _tabs.length, vsync: this);
+    const ids = [
+      'ayam_kampung',
+      'maggot_bsf',
+      'cacing_tanah',
+      'tanaman',
+      'lele',
+    ];
+    final index = ids.indexOf(widget.initialModuleId ?? '');
+    _tabController = TabController(
+      length: _tabs.length,
+      initialIndex: index < 0 ? 0 : index,
+      vsync: this,
+    );
   }
 
   @override
@@ -48,63 +69,73 @@ class _LogbookScreenState extends State<LogbookScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _LogbookHeader(
-          tabController: _tabController,
-          tabs: _tabs,
-          onManageBatches: widget.profile.canViewBatches
-              ? () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => BatchListScreen(
-                      service: _service.batches,
-                      logbookService: _service,
-                      userId: widget.profile.uid,
-                      canManage: widget.profile.canManageBatches,
+    return _ScheduleLogbookContext(
+      batch: widget.initialBatch,
+      child: Column(
+        children: [
+          if (widget.scheduleTitle != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'Kegiatan dirujuk: ${widget.scheduleTitle}. Isi pengamatan aktual lalu simpan. Status jadwal tetap sampai ditandai oleh petugas.',
+              ),
+            ),
+          _LogbookHeader(
+            tabController: _tabController,
+            tabs: _tabs,
+            onManageBatches: widget.profile.canViewBatches
+                ? () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => BatchListScreen(
+                        service: _service.batches,
+                        logbookService: _service,
+                        userId: widget.profile.uid,
+                        canManage: widget.profile.canManageBatches,
+                      ),
                     ),
-                  ),
-                )
-              : null,
-        ),
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              AyamModule(
-                userId: widget.profile.uid,
-                canDeleteHistory: widget.profile.canDeleteLogbooks,
-                canSave: widget.profile.canManageLogbooks,
-                service: widget.service,
-              ),
-              MaggotModule(
-                userId: widget.profile.uid,
-                canDeleteHistory: widget.profile.canDeleteLogbooks,
-                canSave: widget.profile.canManageLogbooks,
-                service: widget.service,
-              ),
-              CacingModule(
-                userId: widget.profile.uid,
-                canDeleteHistory: widget.profile.canDeleteLogbooks,
-                canSave: widget.profile.canManageLogbooks,
-                service: widget.service,
-              ),
-              TanamanModule(
-                userId: widget.profile.uid,
-                canDeleteHistory: widget.profile.canDeleteLogbooks,
-                canSave: widget.profile.canManageLogbooks,
-                service: widget.service,
-              ),
-              LeleModule(
-                userId: widget.profile.uid,
-                canDeleteHistory: widget.profile.canDeleteLogbooks,
-                canSave: widget.profile.canManageLogbooks,
-                service: widget.service,
-              ),
-            ],
+                  )
+                : null,
           ),
-        ),
-      ],
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                AyamModule(
+                  userId: widget.profile.uid,
+                  canDeleteHistory: widget.profile.canDeleteLogbooks,
+                  canSave: widget.profile.canManageLogbooks,
+                  service: widget.service,
+                ),
+                MaggotModule(
+                  userId: widget.profile.uid,
+                  canDeleteHistory: widget.profile.canDeleteLogbooks,
+                  canSave: widget.profile.canManageLogbooks,
+                  service: widget.service,
+                ),
+                CacingModule(
+                  userId: widget.profile.uid,
+                  canDeleteHistory: widget.profile.canDeleteLogbooks,
+                  canSave: widget.profile.canManageLogbooks,
+                  service: widget.service,
+                ),
+                TanamanModule(
+                  userId: widget.profile.uid,
+                  canDeleteHistory: widget.profile.canDeleteLogbooks,
+                  canSave: widget.profile.canManageLogbooks,
+                  service: widget.service,
+                ),
+                LeleModule(
+                  userId: widget.profile.uid,
+                  canDeleteHistory: widget.profile.canDeleteLogbooks,
+                  canSave: widget.profile.canManageLogbooks,
+                  service: widget.service,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -506,11 +537,34 @@ class _LeleModuleState extends _ModuleFormState<LeleModule> {
   LogbookService? get injectedService => widget.service;
 }
 
+class _ScheduleLogbookContext extends InheritedWidget {
+  const _ScheduleLogbookContext({required this.batch, required super.child});
+  final CultivationBatch? batch;
+  @override
+  bool updateShouldNotify(_ScheduleLogbookContext oldWidget) =>
+      batch != oldWidget.batch;
+}
+
 abstract class _ModuleFormState<T extends StatefulWidget> extends State<T>
     with AutomaticKeepAliveClientMixin<T> {
   @override
   bool get wantKeepAlive => true;
   CultivationBatch? _batch;
+  bool _contextApplied = false;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_contextApplied) {
+      final contextBatch = context
+          .dependOnInheritedWidgetOfExactType<_ScheduleLogbookContext>()
+          ?.batch;
+      if (contextBatch?.input.moduleType == spec.moduleType) {
+        _batch = contextBatch;
+      }
+      _contextApplied = true;
+    }
+  }
+
   late final _service = injectedService ?? LogbookService();
   final _values = <String, String>{};
   bool _saving = false;

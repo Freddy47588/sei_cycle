@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../inventory/screen/inventory_history_screen.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../models/logbook_entry.dart';
 import '../models/logbook_form_spec.dart';
@@ -228,6 +229,23 @@ class _LogbookDetailScreenState extends State<LogbookDetailScreen> {
               child: Text(
                 'Koreksi data stok/produksi dan pembatalan belum tersedia. Histori dipertahankan untuk pemeriksaan.',
               ),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => InventoryHistoryScreen(
+                    userId: widget.userId,
+                    canEdit: widget.canEdit,
+                    field: 'logbookId',
+                    value: entry.id,
+                    service: widget.service.inventoryHistory,
+                    logbookService: widget.service,
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.history),
+              label: const Text('Buka Histori Stok'),
             ),
             Text(
               'Keterkaitan Data',

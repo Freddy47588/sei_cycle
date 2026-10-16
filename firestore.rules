@@ -17,18 +17,9 @@ service cloud.firestore {
     }
 
     function activeUser() {
-      return signedIn()
-        && hasProfile()
-        && (
-          (
-            !('isActive' in currentUser().data.keys())
-            || currentUser().data.isActive != false
-          )
-          && (
-            !('is_active' in currentUser().data.keys())
-            || currentUser().data.is_active != false
-          )
-        );
+      return signedIn() && hasProfile()
+        && currentUser().data.get('isActive', true) != false
+        && currentUser().data.get('is_active', true) != false;
     }
 
     function canViewAppData() {
@@ -96,7 +87,7 @@ service cloud.firestore {
     }
 
     function canManageOperations() {
-      return isAdmin() || isOperatorLapangan();
+      return activeUser() && currentUser().data.role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin ', 'operator_lapangan', 'operator'];
     }
 
     function canManageFinance() {
@@ -433,44 +424,96 @@ service cloud.firestore {
       Collection branch backend: inventory
       Bukan inventory_items.
     */
-    match /inventory/{itemId} {
-      allow read: if canViewAppData();
-
-      allow create: if canManageOperations()
-        && (
-          isAdmin()
-          || createsOwnDocument(itemId)
-        );
-
-      allow update: if isAdmin()
-        || (
-          canManageOperations()
-          && updatesExistingDocument()
-
-          // operator lapangan boleh edit stok,
-          // tapi tidak boleh soft delete data
-          && request.resource.data.isDeleted == resource.data.isDeleted
-        );
-
-      allow delete: if isAdmin();
+    // Phase 04: no stock change (including admin) without a new paired ledger.
+    function canReadOperations() {
+      return activeUser() && (supportedRole(currentUser().data.role) || isAdmin());
     }
-
-    /*
-      INVENTORY TRANSACTIONS
-      Histori perubahan stok dari logbook.
-    */
-    match /inventory_transactions/{transactionId} {
-      allow read: if canViewAppData();
-      allow create: if isAdmin()
-        || (
-          canManageOperations()
-          && request.resource.data.id == transactionId
-          && request.resource.data.createdBy == request.auth.uid
+    function finiteStock(n) {
+      return n is number && n >= -1000000000000000 && n <= 1000000000000000;
+    }
+    function validInventory(id, d) {
+      return d.id == id && d.name is string && d.name.size() > 0
+        && d.itemKey is string && d.itemKey.size() > 0
+        && d.moduleType in ['', 'ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.category is string && d.category.size() > 0
+        && d.unit is string && d.unit.size() > 0
+        && finiteStock(d.currentStock) && finiteStock(d.minStock) && d.minStock >= 0
+        && d.isLowStock == (d.currentStock <= d.minStock)
+        && d.isDeleted is bool && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    function pairedStock(id, d, before) {
+      let t = getAfter(/databases/$(database)/documents/inventory_transactions/$(d.lastTransactionId)).data;
+      return d.lastTransactionId is string
+        && !exists(/databases/$(database)/documents/inventory_transactions/$(d.lastTransactionId))
+        && t.itemId == id && t.beforeStock == before && t.afterStock == d.currentStock
+        && t.createdBy == request.auth.uid && t.createdAt == request.time;
+    }
+    match /inventory/{itemId} {
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && validInventory(itemId, request.resource.data)
+        && createsOwnDocument(itemId) && request.resource.data.createdAt == request.time
+        && ((request.resource.data.currentStock == 0 && !('lastTransactionId' in request.resource.data))
+          || pairedStock(itemId, request.resource.data, 0));
+      allow update: if canManageOperations() && validInventory(itemId, request.resource.data)
+        && updatesExistingDocument() && resource.data.isDeleted == false
+        && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'category', 'location', 'minStock', 'isLowStock', 'updatedBy', 'updatedAt'])
+            && request.resource.data.isDeleted == false)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'currentStock', 'lastTransactionId', 'isLowStock', 'updatedBy', 'updatedAt'])
+            && pairedStock(itemId, request.resource.data, resource.data.currentStock))
+          || (isAdmin() && resource.data.currentStock == 0 && request.resource.data.isDeleted == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted', 'updatedBy', 'updatedAt']))
         );
-      allow update: if canManageOperations()
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.createdBy == resource.data.createdBy;
-      allow delete: if isAdmin();
+      allow delete: if false;
+    }
+    function validLedgerSource(d, item) {
+      return (d.source == 'manual' && d.requestId == d.id
+          && d.type in ['in', 'out', 'correction'] && d.notes.size() > 0
+          && d.moduleType == item.moduleType && !('logbookId' in d)
+          && d.allowNegative is bool && finiteStock(d.requestedValue) && d.requestedValue >= 0
+          && (d.afterStock >= 0 || d.allowNegative == true)
+          && ((d.type == 'correction' && d.afterStock == d.requestedValue)
+            || (d.type != 'correction' && d.quantity == d.requestedValue))
+          && (!('batchId' in d) || d.batchId == null || validLogbookBatch(d)))
+        || (d.source == 'opening' && d.type == 'opening' && d.beforeStock == 0
+          && d.afterStock > 0 && d.requestId == d.itemId && d.id == 'opening_' + d.itemId
+          && !exists(/databases/$(database)/documents/inventory/$(d.itemId))
+          && d.moduleType == item.moduleType && !('logbookId' in d) && !('batchId' in d))
+        || (d.source == 'logbook' && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele'] && d.type in ['in', 'out'] && d.requestId == d.logbookId
+          && !exists(/databases/$(database)/documents/logbooks/$(d.logbookId))
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.createdAt == request.time
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.createdBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.moduleType == d.moduleType
+          && d.get('batchId', null) == getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.get('batchId', null));
+    }
+    function validLedger(id, d) {
+      let item = getAfter(/databases/$(database)/documents/inventory/$(d.itemId)).data;
+      let before = exists(/databases/$(database)/documents/inventory/$(d.itemId))
+        ? get(/databases/$(database)/documents/inventory/$(d.itemId)).data.currentStock : 0;
+      return d.keys().hasOnly(['id', 'requestId', 'itemId', 'itemName', 'itemKey', 'moduleType',
+          'type', 'quantity', 'unit', 'beforeStock', 'afterStock', 'notes', 'transactionDate',
+          'createdBy', 'createdAt', 'batchId', 'logbookId', 'source', 'isReversed',
+          'reversedAt', 'reversedBy', 'allowNegative', 'requestedValue'])
+        && d.id == id && d.createdBy == request.auth.uid
+        && d.createdAt == request.time && d.transactionDate == request.time
+        && d.itemName == item.name && d.itemKey == item.itemKey && d.unit == item.unit
+        && d.notes is string && d.isReversed == false
+        && d.get('reversedAt', null) == null && d.get('reversedBy', '') == ''
+        && finiteStock(d.quantity) && d.quantity >= 0
+        && finiteStock(d.beforeStock) && finiteStock(d.afterStock)
+        && d.beforeStock == before && d.afterStock == item.currentStock
+        && item.isDeleted == false && item.lastTransactionId == id && item.updatedAt == request.time
+        && ((d.type in ['in', 'opening'] && d.quantity > 0 && d.afterStock == d.beforeStock + d.quantity)
+          || (d.type == 'out' && d.quantity > 0 && d.afterStock == d.beforeStock - d.quantity)
+          || (d.type == 'correction' && d.quantity == math.abs(d.afterStock - d.beforeStock)))
+        && validLedgerSource(d, item);
+    }
+    match /inventory_transactions/{transactionId} {
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && validLedger(transactionId, request.resource.data);
+      allow update, delete: if false;
     }
 
     /*
@@ -506,26 +549,44 @@ service cloud.firestore {
     /*
       SCHEDULES / KALENDER OPERASIONAL
     */
+    function validSchedule(id, d) {
+      return d.id == id && d.title is string && d.title.size() > 0
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.type is string && d.type.size() > 0 && d.date is timestamp
+        && d.notes is string && d.status in ['pending', 'done', 'skipped']
+        && d.isDeleted is bool && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    function validScheduleBatch(d) {
+      return !('batchId' in d) || d.batchId == null || validLogbookBatch(d);
+    }
     match /schedules/{scheduleId} {
-      allow read: if canViewAppData();
-
-      allow create: if canManageOperations()
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && createsOwnDocument(scheduleId)
+        && validSchedule(scheduleId, request.resource.data) && validScheduleBatch(request.resource.data)
+        && request.resource.data.keys().hasOnly(['id', 'title', 'moduleType', 'type', 'date',
+          'status', 'notes', 'batchId', 'isDeleted', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'creationPayload'])
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time;
+      allow update: if canManageOperations() && updatesExistingDocument()
+        && resource.data.isDeleted == false && resource.data.status == 'pending'
+        && validSchedule(scheduleId, request.resource.data)
         && (
-          isAdmin()
-          || createsOwnDocument(scheduleId)
+          (request.resource.data.status == 'pending' && request.resource.data.isDeleted == false
+            && validScheduleBatch(request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title', 'moduleType', 'type', 'date', 'notes', 'batchId', 'updatedBy', 'updatedAt']))
+          || (request.resource.data.status == 'done'
+            && request.resource.data.completedBy == request.auth.uid && request.resource.data.completedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'completedBy', 'completedAt', 'updatedBy', 'updatedAt']))
+          || (request.resource.data.status == 'skipped'
+            && request.resource.data.skippedBy == request.auth.uid && request.resource.data.skippedAt == request.time
+            && request.resource.data.skipReason is string
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'skippedBy', 'skippedAt', 'skipReason', 'updatedBy', 'updatedAt']))
+          || (isAdmin() && request.resource.data.isDeleted == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted', 'updatedBy', 'updatedAt']))
         );
-
-      allow update: if isAdmin()
-        || (
-          canManageOperations()
-          && updatesExistingDocument()
-
-          // operator lapangan boleh update status jadwal,
-          // tapi tidak boleh soft delete
-          && request.resource.data.isDeleted == resource.data.isDeleted
-        );
-
-      allow delete: if isAdmin();
+      allow delete: if false;
     }
 
     /*

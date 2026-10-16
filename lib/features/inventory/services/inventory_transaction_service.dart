@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../../../core/utils/firestore_validators.dart';
 import '../models/inventory_transaction.dart';
+import '../../../core/models/firestore_page.dart';
 
 class InventoryTransactionService {
   InventoryTransactionService({FirebaseFirestore? firestore})
@@ -20,6 +21,7 @@ class InventoryTransactionService {
     final snapshot = await _collection
         .where('logbookId', isEqualTo: logbookId)
         .orderBy('transactionDate', descending: true)
+        .limit(50)
         .get();
     return snapshot.docs.map(InventoryTransaction.fromDocument).toList();
   }
@@ -31,30 +33,55 @@ class InventoryTransactionService {
     final snapshot = await _collection
         .where('itemId', isEqualTo: itemId)
         .orderBy('transactionDate', descending: true)
+        .limit(50)
         .get();
     return snapshot.docs.map(InventoryTransaction.fromDocument).toList();
+  }
+
+  Future<FirestorePage<InventoryTransaction>> fetchPage({
+    String? field,
+    String? value,
+    DateTime? from,
+    DateTime? until,
+    DocumentSnapshot<Map<String, dynamic>>? cursor,
+  }) async {
+    Query<Map<String, dynamic>> q = _collection;
+    if (field != null && value != null && value.isNotEmpty) {
+      if (!{
+        'itemId',
+        'batchId',
+        'logbookId',
+        'moduleType',
+        'type',
+        'source',
+      }.contains(field)) {
+        throw ArgumentError('Filter histori tidak valid.');
+      }
+      q = q.where(field, isEqualTo: value);
+    }
+    if (from != null) {
+      q = q.where(
+        'transactionDate',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(from),
+      );
+    }
+    if (until != null) {
+      q = q.where('transactionDate', isLessThan: Timestamp.fromDate(until));
+    }
+    q = q.orderBy('transactionDate', descending: true).limit(20);
+    if (cursor != null) q = q.startAfterDocument(cursor);
+    final result = await q.get();
+    return FirestorePage(
+      result.docs.map(InventoryTransaction.fromDocument).toList(),
+      result.docs.lastOrNull,
+      result.docs.length == 20,
+    );
   }
 
   Future<void> markTransactionsReversed(
     String logbookId, {
     required String userId,
   }) async {
-    requireTrimmed(logbookId, 'logbookId');
-    requireTrimmed(userId, 'userId');
-    final snapshot = await _collection
-        .where('logbookId', isEqualTo: logbookId)
-        .where('isReversed', isEqualTo: false)
-        .limit(100)
-        .get();
-    if (snapshot.docs.isEmpty) return;
-    final batch = _firestore.batch();
-    for (final document in snapshot.docs) {
-      batch.update(document.reference, {
-        'isReversed': true,
-        'reversedAt': FieldValue.serverTimestamp(),
-        'reversedBy': userId,
-      });
-    }
-    await batch.commit();
+    throw UnsupportedError('Pembalikan transaksi belum diaktifkan.');
   }
 }

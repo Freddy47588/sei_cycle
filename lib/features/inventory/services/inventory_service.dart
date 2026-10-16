@@ -1,18 +1,19 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/firestore_collections.dart';
+import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/firestore_validators.dart';
 import '../../logbook/services/inventory_mapping.dart';
 import '../models/inventory_item.dart';
+import '../../../core/models/firestore_page.dart';
+import '../../../core/utils/operational_auth.dart';
 
 class InventoryService {
-  InventoryService({FirebaseFirestore? firestore, Uuid? uuid})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _uuid = uuid ?? const Uuid();
+  InventoryService({FirebaseFirestore? firestore})
+    : _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _firestore;
-  final Uuid _uuid;
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(FirestoreCollections.inventory);
@@ -22,97 +23,168 @@ class InventoryService {
         .where('isDeleted', isEqualTo: false)
         .orderBy('isLowStock', descending: true)
         .orderBy('name')
+        .limit(100)
         .snapshots()
         .map(
           (snapshot) => snapshot.docs.map(InventoryItem.fromDocument).toList(),
         );
   }
 
-  Future<void> save({
-    String? id,
-    required String name,
-    String? itemKey,
+  /// One bounded listener per loaded page; never an unbounded collection scan.
+  Stream<List<InventoryItem>> watchLoaded(List<InventoryItem> items) =>
+      _collection
+          .where(
+            FieldPath.documentId,
+            whereIn: items.map((item) => item.id).toList(),
+          )
+          .limit(items.length)
+          .snapshots()
+          .map(
+            (snapshot) =>
+                snapshot.docs.map(InventoryItem.fromDocument).toList(),
+          );
+
+  Future<FirestorePage<InventoryItem>> fetchPage({
     String? moduleType,
+    String? category,
+    DocumentSnapshot<Map<String, dynamic>>? cursor,
+    int limit = 20,
+  }) async {
+    Query<Map<String, dynamic>> q = _collection.where(
+      'isDeleted',
+      isEqualTo: false,
+    );
+    if (moduleType != null) q = q.where('moduleType', isEqualTo: moduleType);
+    if (category != null) q = q.where('category', isEqualTo: category);
+    q = q.orderBy('name').limit(limit.clamp(1, 50));
+    if (cursor != null) q = q.startAfterDocument(cursor);
+    final result = await q.get();
+    return FirestorePage(
+      result.docs.map(InventoryItem.fromDocument).toList(),
+      result.docs.lastOrNull,
+      result.docs.length == limit.clamp(1, 50),
+    );
+  }
+
+  Future<String> createItem({
+    required String requestId,
+    required String name,
+    required String itemKey,
+    required String moduleType,
     required String category,
     required String unit,
-    required double currentStock,
+    required double minStock,
+    required String location,
+    double initialStock = 0,
+    required String userId,
+  }) async {
+    validateDocumentId(requestId);
+    requireOneOf(moduleType, {
+      '',
+      ...FarmModules.values.map((m) => m.id),
+    }, 'Modul');
+    for (final text in [name, itemKey, category, unit]) {
+      requireTrimmed(text, 'Master barang');
+    }
+    validateStockNumber(minStock);
+    validateStockNumber(initialStock);
+    final payload = jsonEncode([
+      name.trim(),
+      itemKey.trim(),
+      moduleType,
+      category.trim(),
+      unit.trim(),
+      minStock,
+      location.trim(),
+      initialStock,
+      userId,
+    ]);
+    final ref = _collection.doc(requestId);
+    await runOperationalTransaction(_firestore, (tx) async {
+      await authorizeOperations(_firestore, tx, userId);
+      final prior = await tx.get(ref);
+      if (prior.exists) {
+        if (prior.data()?['creationPayload'] != payload) {
+          throw StateError('Request ID sama dengan payload berbeda.');
+        }
+        return;
+      }
+      final now = FieldValue.serverTimestamp();
+      final historyId = 'opening_$requestId';
+      tx.set(ref, {
+        'id': requestId,
+        'name': name.trim(),
+        'itemKey': itemKey.trim(),
+        'moduleType': moduleType,
+        'category': category.trim(),
+        'unit': unit.trim(),
+        'location': location.trim(),
+        'minStock': minStock,
+        'currentStock': initialStock,
+        'isLowStock': initialStock <= minStock,
+        'isDeleted': false,
+        'createdBy': userId,
+        'updatedBy': userId,
+        'createdAt': now,
+        'updatedAt': now,
+        'creationPayload': payload,
+        if (initialStock > 0) 'lastTransactionId': historyId,
+      });
+      if (initialStock > 0) {
+        tx.set(_firestore.collection('inventory_transactions').doc(historyId), {
+          'id': historyId,
+          'requestId': requestId,
+          'itemId': requestId,
+          'itemName': name.trim(),
+          'itemKey': itemKey.trim(),
+          'moduleType': moduleType,
+          'type': 'opening',
+          'source': 'opening',
+          'quantity': initialStock,
+          'unit': unit.trim(),
+          'beforeStock': 0,
+          'afterStock': initialStock,
+          'notes': 'Saldo awal',
+          'transactionDate': now,
+          'createdAt': now,
+          'createdBy': userId,
+          'isReversed': false,
+        });
+      }
+    });
+    return requestId;
+  }
+
+  Future<void> saveMetadata({
+    required InventoryItem item,
+    required String name,
+    required String category,
+    required String location,
     required double minStock,
     required String userId,
   }) async {
-    _validateSave(
-      name: name,
-      category: category,
-      unit: unit,
-      currentStock: currentStock,
-      minStock: minStock,
-      userId: userId,
-    );
-
-    final documentId = id ?? _uuid.v4();
-    final now = FieldValue.serverTimestamp();
-    final data = <String, dynamic>{
-      'id': documentId,
-      'name': name.trim(),
-      'itemKey': (itemKey == null || itemKey.trim().isEmpty)
-          ? _itemKeyFromName(name)
-          : itemKey.trim(),
-      'moduleType': moduleType?.trim() ?? '',
-      'category': category.trim(),
-      'unit': unit.trim(),
-      'currentStock': currentStock,
-      'minStock': minStock,
-      'isLowStock': currentStock <= minStock,
-      'updatedBy': userId,
-      'updatedAt': now,
-      'isDeleted': false,
-    };
-    if (id == null) {
-      data['createdBy'] = userId;
-      data['createdAt'] = now;
-    }
-    await _collection.doc(documentId).set(data, SetOptions(merge: true));
-  }
-
-  Future<InventoryItem> getOrCreateInventoryItemByKey({
-    required String itemKey,
-    required String itemName,
-    required String unit,
-    String? moduleType,
-    String? category,
-    required String userId,
-  }) async {
-    requireTrimmed(itemKey, 'itemKey');
-    requireTrimmed(itemName, 'itemName');
-    requireTrimmed(unit, 'unit');
-    requireTrimmed(userId, 'userId');
-
-    final existing = await _findByItemKey(itemKey);
-    if (existing != null) return InventoryItem.fromDocument(existing);
-
-    final documentId = _uuid.v4();
-    final now = FieldValue.serverTimestamp();
-    await _collection.doc(documentId).set({
-      'id': documentId,
-      'name': itemName.trim(),
-      'itemKey': itemKey.trim(),
-      'moduleType': moduleType?.trim() ?? '',
-      'category': (category == null || category.trim().isEmpty)
-          ? 'operasional'
-          : category.trim(),
-      'unit': unit.trim(),
-      'currentStock': 0,
-      'minStock': _defaultMinStock(itemKey),
-      'isLowStock': true,
-      'location': '',
-      'createdBy': userId,
-      'updatedBy': userId,
-      'createdAt': now,
-      'updatedAt': now,
-      'isDeleted': false,
+    requireTrimmed(name, 'Nama');
+    requireTrimmed(category, 'Kategori');
+    validateStockNumber(minStock);
+    await runOperationalTransaction(_firestore, (tx) async {
+      await authorizeOperations(_firestore, tx, userId);
+      final ref = _collection.doc(item.id);
+      final current = await tx.get(ref);
+      if (!current.exists ||
+          current.data()?['isDeleted'] != false ||
+          InventoryItem.fromDocument(current).updatedAt != item.updatedAt) {
+        throw StateError('Barang telah berubah. Muat ulang sebelum mengedit.');
+      }
+      tx.update(ref, {
+        'name': name.trim(),
+        'category': category.trim(),
+        'location': location.trim(),
+        'minStock': minStock,
+        'isLowStock': (current.data()!['currentStock'] as num) <= minStock,
+        'updatedBy': userId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
-
-    final created = await _collection.doc(documentId).get();
-    return InventoryItem.fromDocument(created);
   }
 
   Future<List<InventoryActionTarget>> resolveActionTargets({
@@ -190,15 +262,16 @@ class InventoryService {
     final afterStock = action.isOut
         ? beforeStock - action.quantity
         : beforeStock + action.quantity;
-    final itemId = existing?['id'] as String? ?? target.reference.id;
+    final itemId = target.reference.id;
     final itemData = <String, dynamic>{
       'id': itemId,
-      'name': action.itemName,
+      'name': existing?['name'] ?? action.itemName,
       'itemKey': action.itemKey,
-      'moduleType': action.moduleType ?? existing?['moduleType'] ?? '',
-      'category': action.category ?? existing?['category'] ?? 'operasional',
+      'moduleType': existing?['moduleType'] ?? action.moduleType ?? '',
+      'category': existing?['category'] ?? action.category ?? 'operasional',
       'unit': action.unit,
       'currentStock': afterStock,
+      'lastTransactionId': transactionId,
       'minStock': minStock,
       'isLowStock': afterStock <= minStock,
       'location': existing?['location'] ?? '',
@@ -208,7 +281,17 @@ class InventoryService {
       if (!snapshot.exists) ...{'createdBy': userId, 'createdAt': now},
     };
 
-    transaction.set(target.reference, itemData, SetOptions(merge: true));
+    if (snapshot.exists) {
+      transaction.update(target.reference, {
+        'currentStock': afterStock,
+        'lastTransactionId': transactionId,
+        'isLowStock': afterStock <= minStock,
+        'updatedBy': userId,
+        'updatedAt': now,
+      });
+    } else {
+      transaction.set(target.reference, itemData);
+    }
     transaction.set(
       _firestore
           .collection(FirestoreCollections.inventoryTransactions)
@@ -216,10 +299,12 @@ class InventoryService {
       {
         'id': transactionId,
         'itemId': itemId,
-        'itemName': action.itemName,
+        'itemName': existing?['name'] ?? action.itemName,
         'itemKey': action.itemKey,
         'moduleType': action.moduleType ?? '',
         'logbookId': logbookId,
+        'source': 'logbook',
+        'requestId': logbookId,
         'batchId': ?batchId,
         'type': action.type,
         'quantity': action.quantity,
@@ -243,69 +328,26 @@ class InventoryService {
     String logbookId, {
     required String userId,
   }) async {
-    requireTrimmed(logbookId, 'logbookId');
-    requireTrimmed(userId, 'userId');
-    final transactions = await _firestore
-        .collection(FirestoreCollections.inventoryTransactions)
-        .where('logbookId', isEqualTo: logbookId)
-        .where('isReversed', isEqualTo: false)
-        .get();
-    if (transactions.docs.isEmpty) return;
+    throw UnsupportedError('Pembatalan dan rollback Logbook belum diaktifkan.');
+  }
 
-    await _firestore.runTransaction((transaction) async {
-      for (final document in transactions.docs) {
-        final data = document.data();
-        final itemId = data['itemId'] as String? ?? '';
-        if (itemId.isEmpty) continue;
-        final itemRef = _collection.doc(itemId);
-        final item = await transaction.get(itemRef);
-        final currentStock =
-            (item.data()?['currentStock'] as num?)?.toDouble() ?? 0;
-        final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
-        final type = data['type'];
-        final rolledBackStock = type == 'out'
-            ? currentStock + quantity
-            : currentStock - quantity;
-        final minStock = (item.data()?['minStock'] as num?)?.toDouble() ?? 0;
-        transaction.update(itemRef, {
-          'currentStock': rolledBackStock,
-          'isLowStock': rolledBackStock <= minStock,
-          'updatedBy': userId,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        transaction.update(document.reference, {
-          'isReversed': true,
-          'reversedAt': FieldValue.serverTimestamp(),
-          'reversedBy': userId,
-        });
+  Future<void> delete(String id, {required String userId}) async {
+    await runOperationalTransaction(_firestore, (tx) async {
+      final actor = await authorizeOperations(_firestore, tx, userId);
+      if (!actor.isAdmin) throw StateError('Hanya admin yang dapat menghapus.');
+      final ref = _collection.doc(id);
+      final item = await tx.get(ref);
+      if (!item.exists || item.data()?['currentStock'] != 0) {
+        throw StateError(
+          'Kosongkan stok melalui mutasi sebelum menghapus master.',
+        );
       }
+      tx.update(ref, {
+        'isDeleted': true,
+        'updatedBy': userId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
-  }
-
-  Future<void> delete(String id, {required String userId}) {
-    requireTrimmed(id, 'id');
-    requireTrimmed(userId, 'userId');
-    return _collection.doc(id).update({
-      'isDeleted': true,
-      'updatedBy': userId,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  void _validateSave({
-    required String name,
-    required String category,
-    required String unit,
-    required double currentStock,
-    required double minStock,
-    required String userId,
-  }) {
-    requireTrimmed(name, 'name');
-    requireTrimmed(category, 'category');
-    requireTrimmed(unit, 'unit');
-    requireNonNegative(currentStock, 'currentStock');
-    requireNonNegative(minStock, 'minStock');
-    requireTrimmed(userId, 'userId');
   }
 
   Future<QueryDocumentSnapshot<Map<String, dynamic>>?> _findByItemKey(
@@ -351,15 +393,6 @@ class InventoryStockWarning {
   final double requestedQuantity;
   final double afterStock;
   final String unit;
-}
-
-String _itemKeyFromName(String name) {
-  return name
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-      .replaceAll(RegExp(r'_+'), '_')
-      .replaceAll(RegExp(r'^_|_$'), '');
 }
 
 double _defaultMinStock(String itemKey) {

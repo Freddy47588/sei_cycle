@@ -47,7 +47,7 @@ class InventoryItem {
     ]);
     final minStock = doubleField(data, const ['minStock', 'min_stock']);
     return InventoryItem(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
       name: stringField(data, const ['name']),
       itemKey: stringField(data, const [
         'itemKey',
@@ -58,10 +58,7 @@ class InventoryItem {
       unit: stringField(data, const ['unit']),
       currentStock: currentStock,
       minStock: minStock,
-      isLowStock: boolField(data, const [
-        'isLowStock',
-        'is_low_stock',
-      ], fallback: currentStock <= minStock),
+      isLowStock: currentStock <= minStock,
       location: stringField(data, const ['location']),
       createdBy: stringField(data, const ['createdBy', 'created_by']),
       updatedBy: stringField(data, const ['updatedBy', 'updated_by']),

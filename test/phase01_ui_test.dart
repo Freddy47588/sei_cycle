@@ -614,7 +614,8 @@ class _RecordingLogbookService extends LogbookService {
     required Map<String, dynamic> details,
   }) async => [];
   @override
-  Future<void> createDailyEntry({
+  Future<String> createDailyEntry({
+    String? requestId,
     required String moduleType,
     required String title,
     required String activityType,
@@ -626,5 +627,6 @@ class _RecordingLogbookService extends LogbookService {
   }) async {
     savedModule = moduleType;
     savedDetails = details;
+    return requestId ?? 'saved-id';
   }
 }

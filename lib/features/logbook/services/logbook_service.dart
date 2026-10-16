@@ -1,11 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../../../core/utils/firestore_validators.dart';
 import '../../inventory/services/inventory_service.dart';
 import '../models/logbook_entry.dart';
+import '../models/logbook_form_spec.dart';
+import '../models/logbook_page.dart';
 import 'inventory_mapping.dart';
 
 class LogbookService {
@@ -68,7 +71,8 @@ class LogbookService {
     return snapshot.docs.map(LogbookEntry.fromDocument).toList();
   }
 
-  Future<void> createDailyEntry({
+  Future<String> createDailyEntry({
+    String? requestId,
     required String moduleType,
     required String title,
     required String activityType,
@@ -85,7 +89,8 @@ class LogbookService {
       userId: userId,
     );
 
-    await createLogbookWithInventory(
+    return createLogbookWithInventory(
+      requestId: requestId,
       moduleType: moduleType,
       title: title,
       activityType: activityType,
@@ -109,7 +114,8 @@ class LogbookService {
     return _inventoryService.previewNegativeStockWarnings(actions: actions);
   }
 
-  Future<void> createLogbookWithInventory({
+  Future<String> createLogbookWithInventory({
+    String? requestId,
     required String moduleType,
     required String title,
     required String activityType,
@@ -126,7 +132,13 @@ class LogbookService {
       userId: userId,
     );
 
-    final logbookId = _uuid.v4();
+    validateLogbookDetails(moduleType, details);
+    if (quantity != null && (!quantity.isFinite || quantity < 0)) {
+      throw ArgumentError('Kuantitas tidak valid.');
+    }
+    final logbookId = requestId ?? _uuid.v4();
+    requireTrimmed(logbookId, 'requestId');
+    if (logbookId.contains('/')) throw ArgumentError('ID catatan tidak valid.');
     final actions = mapLogbookDetailsToInventoryActions(
       moduleType: moduleType,
       details: details,
@@ -145,108 +157,146 @@ class LogbookService {
           target.action: _uuid.v4(),
     };
 
-    await _firestore.runTransaction((transaction) async {
-      final inventorySnapshots =
-          <InventoryActionTarget, DocumentSnapshot<Map<String, dynamic>>>{};
-      final notificationSnapshots =
-          <InventoryActionTarget, DocumentSnapshot<Map<String, dynamic>>>{};
+    bool matchesRequest(Map<String, dynamic> data) =>
+        data['createdBy'] == userId &&
+        data['moduleType'] == moduleType &&
+        data['title'] == title.trim() &&
+        data['activityType'] == activityType.trim() &&
+        data['quantity'] == quantity &&
+        data['unit'] == unit?.trim() &&
+        data['isDeleted'] == false &&
+        data['notes'] == (notes?.trim() ?? '') &&
+        data['details'] is Map &&
+        mapEquals(Map<String, dynamic>.from(data['details'] as Map), details);
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final existing = await transaction.get(_collection.doc(logbookId));
+        if (existing.exists) {
+          final data = existing.data()!;
+          if (!matchesRequest(data)) {
+            throw StateError(
+              'ID permintaan sudah digunakan; muat catatan sebelum mencoba kembali.',
+            );
+          }
+          return;
+        }
+        final inventorySnapshots =
+            <InventoryActionTarget, DocumentSnapshot<Map<String, dynamic>>>{};
+        final notificationSnapshots =
+            <InventoryActionTarget, DocumentSnapshot<Map<String, dynamic>>>{};
 
-      for (final target in targets) {
-        inventorySnapshots[target] = await transaction.get(target.reference);
-        notificationSnapshots[target] = await transaction.get(
-          _lowStockNotificationRef(target.reference.id, userId),
-        );
-      }
-
-      final now = FieldValue.serverTimestamp();
-      transaction.set(_collection.doc(logbookId), {
-        'id': logbookId,
-        'title': title.trim(),
-        'moduleType': moduleType,
-        'activityDate': Timestamp.fromDate(DateTime.now()),
-        'activityType': activityType.trim(),
-        'quantity': quantity,
-        'unit': unit?.trim(),
-        'status': 'completed',
-        'notes': notes?.trim() ?? '',
-        'details': details,
-        'createdBy': userId,
-        'updatedBy': userId,
-        'createdAt': now,
-        'updatedAt': now,
-        'isDeleted': false,
-      });
-
-      for (final target in targets) {
-        final snapshot = inventorySnapshots[target]!;
-        _inventoryService.applyInventoryActionInTransaction(
-          transaction: transaction,
-          target: target,
-          snapshot: snapshot,
-          logbookId: logbookId,
-          transactionId: transactionIds[target.action]!,
-          userId: userId,
-        );
-
-        final action = target.action;
-        if (action.shouldCreateProductionResult) {
-          final id = productionIds[action]!;
-          transaction.set(
-            _firestore
-                .collection(FirestoreCollections.productionResults)
-                .doc(id),
-            {
-              'id': id,
-              'logbookId': logbookId,
-              'moduleType': moduleType,
-              'productName': action.productName ?? action.itemName,
-              'quantity': action.quantity,
-              'unit': action.unit,
-              'qualityStatus': 'normal',
-              'harvestDate': now,
-              'notes': action.notes,
-              'createdBy': userId,
-              'createdAt': now,
-            },
+        for (final target in targets) {
+          inventorySnapshots[target] = await transaction.get(target.reference);
+          notificationSnapshots[target] = await transaction.get(
+            _lowStockNotificationRef(target.reference.id, userId),
           );
         }
 
-        final data = snapshot.exists ? snapshot.data() : target.existingData;
-        final beforeStock = (data?['currentStock'] as num?)?.toDouble() ?? 0;
-        final minStock = (data?['minStock'] as num?)?.toDouble() ?? 0;
-        final afterStock = action.isOut
-            ? beforeStock - action.quantity
-            : beforeStock + action.quantity;
-        if (afterStock <= minStock) {
-          final notificationRef = _lowStockNotificationRef(
-            target.reference.id,
-            userId,
+        final now = FieldValue.serverTimestamp();
+        transaction.set(_collection.doc(logbookId), {
+          'id': logbookId,
+          'title': title.trim(),
+          'moduleType': moduleType,
+          'activityDate': Timestamp.fromDate(DateTime.now()),
+          'activityType': activityType.trim(),
+          'quantity': quantity,
+          'unit': unit?.trim(),
+          'status': 'completed',
+          'notes': notes?.trim() ?? '',
+          'details': details,
+          'createdBy': userId,
+          'updatedBy': userId,
+          'createdAt': now,
+          'updatedAt': now,
+          'isDeleted': false,
+        });
+
+        for (final target in targets) {
+          final snapshot = inventorySnapshots[target]!;
+          _inventoryService.applyInventoryActionInTransaction(
+            transaction: transaction,
+            target: target,
+            snapshot: snapshot,
+            logbookId: logbookId,
+            transactionId: transactionIds[target.action]!,
+            userId: userId,
           );
-          final notification = notificationSnapshots[target]!;
-          final notificationData = notification.data();
-          final shouldCreateNotification =
-              !notification.exists ||
-              notificationData?['isDeleted'] == true ||
-              notificationData?['isRead'] == true;
-          if (shouldCreateNotification) {
-            transaction.set(notificationRef, {
-              'id': notificationRef.id,
-              'title': 'Stok ${action.itemName} rendah',
-              'body':
-                  'Stok ${action.itemName} menipis. Sisa ${_number(afterStock)} ${action.unit}.',
-              'type': 'low_stock',
-              'targetRole': 'admin',
-              'userId': userId,
-              'relatedCollection': FirestoreCollections.inventory,
-              'relatedId': target.reference.id,
-              'isRead': false,
-              'createdAt': now,
-              'isDeleted': false,
-            }, SetOptions(merge: true));
+
+          final action = target.action;
+          if (action.shouldCreateProductionResult) {
+            final id = productionIds[action]!;
+            transaction.set(
+              _firestore
+                  .collection(FirestoreCollections.productionResults)
+                  .doc(id),
+              {
+                'id': id,
+                'logbookId': logbookId,
+                'moduleType': moduleType,
+                'productName': action.productName ?? action.itemName,
+                'quantity': action.quantity,
+                'unit': action.unit,
+                'qualityStatus': 'normal',
+                'harvestDate': now,
+                'notes': action.notes,
+                'createdBy': userId,
+                'createdAt': now,
+              },
+            );
+          }
+
+          final data = snapshot.exists ? snapshot.data() : target.existingData;
+          final beforeStock = (data?['currentStock'] as num?)?.toDouble() ?? 0;
+          final minStock = (data?['minStock'] as num?)?.toDouble() ?? 0;
+          final afterStock = action.isOut
+              ? beforeStock - action.quantity
+              : beforeStock + action.quantity;
+          if (afterStock <= minStock) {
+            final notificationRef = _lowStockNotificationRef(
+              target.reference.id,
+              userId,
+            );
+            final notification = notificationSnapshots[target]!;
+            final notificationData = notification.data();
+            final shouldCreateNotification =
+                !notification.exists ||
+                notificationData?['isDeleted'] == true ||
+                notificationData?['isRead'] == true;
+            if (shouldCreateNotification) {
+              transaction.set(notificationRef, {
+                'id': notificationRef.id,
+                'title': 'Stok ${action.itemName} rendah',
+                'body':
+                    'Stok ${action.itemName} menipis. Sisa ${_number(afterStock)} ${action.unit}.',
+                'type': 'low_stock',
+                'targetRole': 'admin',
+                'userId': userId,
+                'relatedCollection': FirestoreCollections.inventory,
+                'relatedId': target.reference.id,
+                'isRead': false,
+                'createdAt': now,
+                'isDeleted': false,
+              }, SetOptions(merge: true));
+            }
           }
         }
+      });
+    } on FirebaseException catch (error) {
+      if (![
+        'permission-denied',
+        'aborted',
+        'unavailable',
+      ].contains(error.code)) {
+        rethrow;
       }
-    });
+      // A concurrent request may have committed before this transaction was
+      // rejected. Verify the exact payload on the server before reporting success.
+      final committed = await _collection
+          .doc(logbookId)
+          .get(const GetOptions(source: Source.server));
+      if (!committed.exists || !matchesRequest(committed.data()!)) rethrow;
+    }
+    return logbookId;
   }
 
   DocumentReference<Map<String, dynamic>> _lowStockNotificationRef(
@@ -269,6 +319,11 @@ class LogbookService {
     required String note,
     required String userId,
   }) async {
+    if (id != null) {
+      throw UnsupportedError(
+        'Gunakan edit catatan deskriptif; koreksi stok terpisah.',
+      );
+    }
     _validateEntry(
       moduleType: moduleId,
       title: activityType,
@@ -306,13 +361,101 @@ class LogbookService {
     await _collection.doc(documentId).set(data, SetOptions(merge: true));
   }
 
-  Future<void> softDelete(String id, {required String userId}) {
-    requireTrimmed(id, 'id');
+  Future<void> softDelete(String id, {required String userId}) async {
+    throw UnsupportedError(
+      'Pembatalan belum tersedia: perlu koreksi stok dan produksi secara atomik.',
+    );
+  }
+
+  Future<LogbookPage> getPage({
+    required LogbookFilter filter,
+    DocumentSnapshot<Map<String, dynamic>>? cursor,
+  }) async {
+    Query<Map<String, dynamic>> query = _collection.where(
+      'isDeleted',
+      isEqualTo: false,
+    );
+    if (filter.moduleId != null) {
+      query = query.where('moduleType', isEqualTo: filter.moduleId);
+    }
+    if (filter.start != null) {
+      query = query.where(
+        'activityDate',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(filter.start!),
+      );
+    }
+    if (filter.endExclusive != null) {
+      query = query.where(
+        'activityDate',
+        isLessThan: Timestamp.fromDate(filter.endExclusive!),
+      );
+    }
+    query = query
+        .orderBy('activityDate', descending: filter.newestFirst)
+        .limit(20);
+    if (cursor != null) query = query.startAfterDocument(cursor);
+    final result = await query.get();
+    return LogbookPage(
+      entries: result.docs.map(LogbookEntry.fromDocument).toList(),
+      cursor: result.docs.lastOrNull,
+      hasMore: result.docs.length == 20,
+    );
+  }
+
+  Future<LogbookEntry?> getEntry(String id) async {
+    final doc = await _collection.doc(id).get();
+    return doc.exists ? LogbookEntry.fromDocument(doc) : null;
+  }
+
+  Future<LogbookLinks> getLinks(String id) async {
+    final results = await Future.wait([
+      _firestore
+          .collection(FirestoreCollections.inventoryTransactions)
+          .where('logbookId', isEqualTo: id)
+          .limit(50)
+          .get(),
+      _firestore
+          .collection(FirestoreCollections.productionResults)
+          .where('logbookId', isEqualTo: id)
+          .limit(50)
+          .get(),
+    ]);
+    return LogbookLinks(
+      inventory: results[0].docs.map((d) => d.data()).toList(),
+      production: results[1].docs.map((d) => d.data()).toList(),
+    );
+  }
+
+  Future<void> updateNotes(
+    String id, {
+    required String notes,
+    required String userId,
+    required DateTime expectedUpdatedAt,
+  }) async {
     requireTrimmed(userId, 'userId');
-    return _collection.doc(id).update({
-      'isDeleted': true,
-      'updatedBy': userId,
-      'updatedAt': FieldValue.serverTimestamp(),
+    final auditRef = _collection.doc(id).collection('note_edits').doc();
+    await _firestore.runTransaction((tx) async {
+      final doc = await tx.get(_collection.doc(id));
+      if (!doc.exists || doc.data()?['isDeleted'] == true) {
+        throw StateError('Catatan tidak tersedia.');
+      }
+      final entry = LogbookEntry.fromDocument(doc);
+      if (entry.updatedAt != expectedUpdatedAt) {
+        throw StateError('Catatan berubah. Muat ulang sebelum mengedit.');
+      }
+      final now = FieldValue.serverTimestamp();
+      tx.set(auditRef, {
+        'before': entry.note,
+        'after': notes.trim(),
+        'editedBy': userId,
+        'editedAt': now,
+      });
+      tx.update(doc.reference, {
+        'notes': notes.trim(),
+        'updatedBy': userId,
+        'updatedAt': now,
+        'lastNoteEditId': auditRef.id,
+      });
     });
   }
 

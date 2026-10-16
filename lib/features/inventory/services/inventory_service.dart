@@ -122,7 +122,8 @@ class InventoryService {
     final targets = <InventoryActionTarget>[];
     for (final action in actions) {
       final existing = await _findByItemKey(action.itemKey);
-      final reference = existing?.reference ?? _collection.doc(_uuid.v4());
+      final reference =
+          existing?.reference ?? _collection.doc('logbook_${action.itemKey}');
       targets.add(
         InventoryActionTarget(
           action: action,
@@ -169,6 +170,16 @@ class InventoryService {
     required String userId,
   }) {
     final action = target.action;
+    if (!snapshot.exists && target.existingData != null) {
+      throw StateError('Item stok telah dihapus. Muat ulang inventaris.');
+    }
+    if (snapshot.exists &&
+        (snapshot.data()?['isDeleted'] == true ||
+            snapshot.data()?['unit'] != action.unit)) {
+      throw StateError(
+        'Item stok tidak aktif atau satuannya berbeda. Periksa inventaris.',
+      );
+    }
     final now = FieldValue.serverTimestamp();
     final existing = snapshot.exists ? snapshot.data() : target.existingData;
     final beforeStock = (existing?['currentStock'] as num?)?.toDouble() ?? 0;

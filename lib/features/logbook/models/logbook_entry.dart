@@ -10,6 +10,7 @@ class LogbookEntry {
     required this.activityType,
     required this.activityDate,
     required this.quantity,
+    this.hasQuantity = true,
     required this.unit,
     String? status,
     String? condition,
@@ -30,6 +31,7 @@ class LogbookEntry {
   final String activityType;
   final DateTime activityDate;
   final double quantity;
+  final bool hasQuantity;
   final String unit;
   final String status;
   final String note;
@@ -47,7 +49,7 @@ class LogbookEntry {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return LogbookEntry(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
       title: stringField(data, const ['title'], fallback: 'Catatan Logbook'),
       moduleId: stringField(data, const ['moduleType', 'module_id']),
       activityType: stringField(data, const ['activityType', 'activity_type']),
@@ -56,6 +58,7 @@ class LogbookEntry {
         'activity_date',
       ]),
       quantity: doubleField(data, const ['quantity']),
+      hasQuantity: data['quantity'] is num,
       unit: stringField(data, const ['unit']),
       status: stringField(data, const ['status', 'condition']),
       note: stringField(data, const ['notes', 'note']),
@@ -75,7 +78,7 @@ class LogbookEntry {
       'moduleType': moduleId,
       'activityDate': Timestamp.fromDate(activityDate),
       'activityType': activityType,
-      'quantity': quantity,
+      'quantity': hasQuantity ? quantity : null,
       'unit': unit,
       'status': status,
       'notes': note,

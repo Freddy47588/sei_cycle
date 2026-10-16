@@ -8,7 +8,9 @@ SeiCycle menggunakan **Firebase Authentication** untuk autentikasi dan **Cloud F
 
 - Login email/password dan Google, registrasi, profil, serta role pengguna.
 - Dashboard ringkasan modul, logbook, stok rendah, jadwal, aktivitas, dan keuangan sesuai hak akses. Error dan data kosong tidak diganti angka contoh.
-- Form Logbook lima modul, simpan catatan, riwayat yang sudah tersedia, transaksi inventaris, serta hasil produksi terkait.
+- Form Logbook original lima modul, simpan dengan perlindungan permintaan berulang, dan akses langsung ke catatan baru.
+- **Daftar Logbook** dengan pencarian pada catatan yang sudah dimuat, filter modul/tanggal, urutan terbaru/terlama, serta pagination 20 catatan.
+- **Detail Logbook** dari dokumen aktual, rincian bersatuan, relasi inventaris/produksi, dan edit catatan tambahan dengan audit trail untuk admin/operator lapangan. Koreksi kuantitas serta pembatalan belum diaktifkan.
 - Inventaris, jadwal, keuangan, rekomendasi berbasis aturan, dan laporan PDF/Excel.
 - Katalog edukasi artikel, SOP, serta video dari teks/URL eksternal; thumbnail dan gambar lokal sebagai fallback. Pembaca detail lengkap dikembangkan pada Phase 07.
 - Notifikasi dalam aplikasi melalui inbox Firestore dan pengingat lokal. FCM saat ini terbatas pada permission/token client; pengiriman push terjadwal dari server belum tersedia.
@@ -29,6 +31,14 @@ Empat menu utama: **Dashboard, Logbook, Edukasi, Notifikasi**. Fitur tambahan di
 Keuangan dan laporan keuangan pada UI dibatasi ke admin/operator keuangan aktif. Pembatasan UI tidak menggantikan Firestore Security Rules. Rules yang diwarisi masih mengizinkan pembacaan transaksi oleh semua pengguna aktif; evaluasi penyempitan rules memerlukan pekerjaan keamanan terpisah. Phase 01 tidak mengubah rules.
 
 Akun baru memakai `operator_lapangan`. Pengelola berwenang mengatur role pada `users/{uid}`. Pastikan akun aktif melalui `isActive`/`is_active`.
+
+## Alur Logbook
+
+**Form ? Simpan Catatan ? Lihat Catatan ? Detail**, atau buka **Daftar Logbook** dari form. Filter awal mengikuti modul yang sedang digunakan. Input tetap terlihat setelah simpan; tombol simpan nonaktif sampai isian diubah. Kegagalan simpan mempertahankan input dan ID permintaan untuk retry.
+
+Pencarian judul/catatan memakai debounce 350 ms dan hanya mencakup halaman yang sudah dimuat. Gunakan **Muat berikutnya** untuk memperluas cakupan. Detail dapat dimuat ulang dari Cloud Firestore.
+
+Perubahan catatan tambahan tidak mengubah stok atau hasil produksi. Pembatalan/penghapusan serta koreksi kuantitas memerlukan mekanisme koreksi terintegrasi dan belum tersedia. Rules Phase 02 harus diterapkan oleh pengelola sebelum menggunakan edit dengan audit trail; pekerjaan ini tidak melakukan deployment produksi. Lihat [dokumentasi Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md) untuk batas mapping dan keamanan data.
 
 ## Instalasi dan konfigurasi
 
@@ -73,6 +83,15 @@ Opsional: set environment variable `FLUTTER_ROOT` ke direktori Flutter SDK agar 
 
 [Audit Phase 01](docs/PHASE_01_UI_AUDIT.md) mencatat baseline, perbandingan desain, pengujian, dan batas verifikasi. Referensi asli tersedia di folder `screenshots/` pada branch `main`.
 
+Uji rules dan kontrak transaksi dengan Firestore Emulator (Node.js ?20, Java ?21, Firebase CLI):
+
+```bash
+npm ci --prefix tools/firestore_tests
+firebase emulators:exec --only firestore --project demo-seicycle-phase02 --config firebase.phase02.json "npm --prefix tools/firestore_tests test"
+```
+
+Gunakan project demo tersebut; konfigurasi pengujian terpisah dari produksi. Untuk PNG daftar/detail: `flutter test test/phase02_visual_test.dart --dart-define=CAPTURE_UI=true` (hasil di `build/phase02/`).
+
 ## Struktur dan dokumentasi
 
 ```text
@@ -84,6 +103,7 @@ test/                Pengujian model, layanan, dan widget
 docs/                Dokumentasi implementasi
 ```
 
+- [Logbook Management Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md)
 - [Arsitektur backend](docs/BACKEND.md)
 - [Schema Cloud Firestore](docs/FIRESTORE_SCHEMA.md)
 - [ERD](docs/ERD.md)

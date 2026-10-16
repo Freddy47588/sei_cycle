@@ -327,28 +327,45 @@ service cloud.firestore {
     /*
       LOGBOOK OPERASIONAL
       Semua user login bisa lihat tampilan.
-      Admin dan operator lapangan bisa tambah/edit.
-      Hapus permanen hanya admin.
+      Admin/operator lapangan bisa tambah dan edit notes dengan audit atomik.
+      Koreksi kuantitas dan pembatalan belum diaktifkan pada Phase 02.
     */
     match /logbooks/{logbookId} {
       allow read: if canViewAppData();
 
       allow create: if canManageOperations()
-        && (
-          isAdmin()
-          || createsOwnDocument(logbookId)
-        );
+        && createsOwnDocument(logbookId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
 
-      allow update: if isAdmin()
-        || (
-          canManageOperations()
-          && updatesExistingDocument()
+      allow update: if canManageOperations()
+        && updatesExistingDocument()
+        && resource.data.isDeleted == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notes', 'updatedBy', 'updatedAt', 'lastNoteEditId'
+        ])
+        && request.resource.data.notes is string
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastNoteEditId is string
+        && !exists(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId))
+        && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId)).data.before == resource.data.notes
+        && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId)).data.after == request.resource.data.notes;
 
-          // operator lapangan tidak boleh soft delete
-          && request.resource.data.isDeleted == resource.data.isDeleted
-        );
+      allow delete: if false;
 
-      allow delete: if isAdmin();
+      match /note_edits/{editId} {
+        allow read: if canViewAppData();
+        allow create: if canManageOperations()
+          && request.resource.data.keys().hasOnly(['before', 'after', 'editedBy', 'editedAt'])
+          && request.resource.data.before is string
+          && request.resource.data.after is string
+          && request.resource.data.editedBy == request.auth.uid
+          && request.resource.data.editedAt == request.time
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.lastNoteEditId == editId
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.notes == request.resource.data.after
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.updatedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     /*

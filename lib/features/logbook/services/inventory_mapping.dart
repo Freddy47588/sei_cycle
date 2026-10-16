@@ -110,9 +110,8 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
         unit: 'kg',
         category: 'bahan_produksi',
       );
-      final harvestKey = details.containsKey('panen_maggot_kg')
-          ? 'panen_maggot_kg'
-          : 'estimasi_panen_kg';
+      const harvestKey =
+          'panen_maggot_kg'; // Estimates are observations, not harvests.
       add(
         key: harvestKey,
         itemKey: 'maggot_segar',
@@ -141,14 +140,6 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
         category: 'pakan',
       );
       add(
-        key: 'media_cacing_kg',
-        itemKey: 'media_cacing',
-        itemName: 'Media Cacing',
-        type: 'out',
-        unit: 'kg',
-        category: 'bahan_produksi',
-      );
-      add(
         key: 'panen_kascing_kg',
         itemKey: 'kascing',
         itemName: 'Kascing',
@@ -169,14 +160,6 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
         productName: 'Kascing Cair',
       );
     case 'tanaman':
-      add(
-        key: 'pupuk_kascing_cair_liter',
-        itemKey: 'kascing_cair',
-        itemName: 'Kascing Cair',
-        type: 'out',
-        unit: 'liter',
-        category: 'pupuk',
-      );
       add(
         key: 'pupuk_kascing_kg',
         itemKey: 'kascing',
@@ -199,14 +182,16 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
         );
       }
     case 'lele':
-      add(
-        key: 'pakan_lele_kg',
-        itemKey: 'pakan_lele',
-        itemName: 'Pakan Lele',
-        type: 'out',
-        unit: 'kg',
-        category: 'pakan',
-      );
+      for (final key in ['pakan_maggot_pagi_kg', 'pakan_lele_kg']) {
+        add(
+          key: key,
+          itemKey: 'maggot_segar',
+          itemName: 'Maggot Segar',
+          type: 'out',
+          unit: 'kg',
+          category: 'pakan',
+        );
+      }
       add(
         key: 'panen_lele_kg',
         itemKey: 'lele_panen',
@@ -219,7 +204,28 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
       );
   }
 
-  return actions;
+  // A transaction must write each stock document once, including morning/evening feed.
+  final grouped = <String, InventoryLogbookAction>{};
+  for (final action in actions) {
+    final key = '${action.itemKey}:${action.type}';
+    final previous = grouped[key];
+    grouped[key] = InventoryLogbookAction(
+      itemKey: action.itemKey,
+      itemName: action.itemName,
+      type: action.type,
+      quantity: (previous?.quantity ?? 0) + action.quantity,
+      unit: action.unit,
+      notes: action.notes,
+      moduleType: action.moduleType,
+      category: action.category,
+      shouldCreateProductionResult: action.shouldCreateProductionResult,
+      productName: action.productName,
+    );
+  }
+  if (grouped.values.any((action) => !action.quantity.isFinite)) {
+    throw ArgumentError('Total kuantitas terlalu besar.');
+  }
+  return grouped.values.toList();
 }
 
 ({String itemKey, String productName})? _plantHarvest(
@@ -246,10 +252,10 @@ List<InventoryLogbookAction> mapLogbookDetailsToInventoryActions({
 }
 
 double? _quantity(Object? value) {
-  if (value is num && value > 0) return value.toDouble();
+  if (value is num && value.isFinite && value > 0) return value.toDouble();
   if (value is String) {
     final parsed = double.tryParse(value.trim().replaceAll(',', '.'));
-    if (parsed != null && parsed > 0) return parsed;
+    if (parsed != null && parsed.isFinite && parsed > 0) return parsed;
   }
   return null;
 }

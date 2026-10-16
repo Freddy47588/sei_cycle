@@ -41,8 +41,8 @@ class AppUser {
   bool get canDeleteUsers => isAdmin;
 
   bool get canViewLogbooks => isActive;
-  bool get canManageLogbooks => isAdmin || isOperatorLapangan;
-  bool get canDeleteLogbooks => isAdmin;
+  bool get canManageLogbooks => isActive && (isAdmin || isOperatorLapangan);
+  bool get canDeleteLogbooks => isActive && isAdmin;
   bool get canViewInventory => isActive;
   bool get canManageInventory => isAdmin || isOperatorLapangan;
   bool get canDeleteInventory => isAdmin;

@@ -37,6 +37,7 @@ class EducationService {
     String? type,
     String? moduleType,
     String? status,
+    int limit = 20,
   }) {
     Query<Map<String, dynamic>> query = _collection.where(
       'isDeleted',
@@ -44,7 +45,7 @@ class EducationService {
     );
 
     // Status filter
-    if (status != null && status.isNotEmpty) {
+    if (includeDrafts && status != null && status.isNotEmpty) {
       query = query.where('status', isEqualTo: status);
     } else if (!includeDrafts) {
       query = query.where('status', isEqualTo: EducationStatus.published);
@@ -62,6 +63,7 @@ class EducationService {
 
     return query
         .orderBy('updatedAt', descending: true)
+        .limit(limit)
         .snapshots()
         .map(
           (snapshot) =>
@@ -84,6 +86,7 @@ class EducationService {
   /// Simpan artikel. Buat baru jika [id] null, update jika ada.
   Future<String> saveArticle({
     String? id,
+    DateTime? expectedUpdatedAt,
     required String title,
     required String summary,
     required String content,
@@ -120,7 +123,12 @@ class EducationService {
       data['createdBy'] = userId;
       data['createdAt'] = now;
     }
-    await _collection.doc(docId).set(data, SetOptions(merge: true));
+    await _write(
+      docId,
+      data,
+      create: id == null,
+      expectedUpdatedAt: expectedUpdatedAt,
+    );
     return docId;
   }
 
@@ -131,6 +139,7 @@ class EducationService {
   /// Simpan video tutorial. Tidak ada upload; hanya menyimpan URL eksternal.
   Future<String> saveVideo({
     String? id,
+    DateTime? expectedUpdatedAt,
     required String title,
     required String description,
     required String externalVideoUrl,
@@ -144,6 +153,9 @@ class EducationService {
     requireWritesEnabled();
     _validateTitle(title, userId);
     requireTrimmed(externalVideoUrl, 'externalVideoUrl');
+    if (!isSafeEducationUrl(externalVideoUrl)) {
+      throw ArgumentError('Gunakan URL HTTPS tanpa kredensial.');
+    }
     requireOneOf(status, EducationStatus.values, 'status');
 
     final docId = id ?? _uuid.v4();
@@ -170,7 +182,12 @@ class EducationService {
       data['createdBy'] = userId;
       data['createdAt'] = now;
     }
-    await _collection.doc(docId).set(data, SetOptions(merge: true));
+    await _write(
+      docId,
+      data,
+      create: id == null,
+      expectedUpdatedAt: expectedUpdatedAt,
+    );
     return docId;
   }
 
@@ -181,6 +198,7 @@ class EducationService {
   /// Simpan SOP operasional. Langkah disimpan sebagai `List<String>` di Firestore.
   Future<String> saveSop({
     String? id,
+    DateTime? expectedUpdatedAt,
     required String title,
     required String moduleType,
     required List<String> steps,
@@ -203,6 +221,7 @@ class EducationService {
         .map((s) => s.trim())
         .where((s) => s.isNotEmpty)
         .toList();
+    if (cleanSteps.isEmpty) throw ArgumentError('Langkah SOP wajib diisi.');
     final data = <String, dynamic>{
       'id': docId,
       'title': title.trim(),
@@ -228,7 +247,12 @@ class EducationService {
       data['createdBy'] = userId;
       data['createdAt'] = now;
     }
-    await _collection.doc(docId).set(data, SetOptions(merge: true));
+    await _write(
+      docId,
+      data,
+      create: id == null,
+      expectedUpdatedAt: expectedUpdatedAt,
+    );
     return docId;
   }
 
@@ -239,6 +263,7 @@ class EducationService {
   /// Simpan konten generik. Routing ke saveArticle/saveVideo/saveSop berdasarkan [type].
   Future<String> save({
     String? id,
+    DateTime? expectedUpdatedAt,
     required String title,
     required String type,
     required String content,
@@ -257,6 +282,7 @@ class EducationService {
     return switch (type) {
       EducationType.video => saveVideo(
         id: id,
+        expectedUpdatedAt: expectedUpdatedAt,
         title: title,
         description: content,
         externalVideoUrl: externalUrl,
@@ -269,6 +295,7 @@ class EducationService {
       ),
       EducationType.sop => saveSop(
         id: id,
+        expectedUpdatedAt: expectedUpdatedAt,
         title: title,
         moduleType: moduleType,
         steps: steps.isNotEmpty ? steps : content.split('\n'),
@@ -280,6 +307,7 @@ class EducationService {
       ),
       _ => saveArticle(
         id: id,
+        expectedUpdatedAt: expectedUpdatedAt,
         title: title,
         summary: content.length > 200
             ? '${content.substring(0, 200)}...'
@@ -309,7 +337,7 @@ class EducationService {
     requireTrimmed(id, 'id');
     requireTrimmed(userId, 'userId');
     requireOneOf(status, EducationStatus.values, 'status');
-    return _collection.doc(id).update({
+    return _write(id, {
       'status': status,
       'updatedBy': userId,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -324,7 +352,7 @@ class EducationService {
     requireWritesEnabled();
     requireTrimmed(id, 'id');
     requireTrimmed(userId, 'userId');
-    return _collection.doc(id).update({
+    return _write(id, {
       'isDeleted': true,
       'updatedBy': userId,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -335,8 +363,63 @@ class EducationService {
   // Helpers
   // ---------------------------------------------------------------------------
 
+  Future<void> _write(
+    String id,
+    Map<String, dynamic> patch, {
+    bool create = false,
+    DateTime? expectedUpdatedAt,
+  }) async {
+    final editId = _uuid.v4();
+    await _firestore.runTransaction((tx) async {
+      final reference = _collection.doc(id);
+      final snapshot = await tx.get(reference);
+      if (create == snapshot.exists) {
+        throw StateError(
+          create
+              ? 'ID konten telah digunakan.'
+              : 'Konten tidak ditemukan. Muat ulang daftar.',
+        );
+      }
+      final before = snapshot.data();
+      if (expectedUpdatedAt != null &&
+          before?['updatedAt'] != Timestamp.fromDate(expectedUpdatedAt)) {
+        throw StateError(
+          'Konten telah berubah. Muat versi terbaru sebelum menyimpan.',
+        );
+      }
+      final after = <String, dynamic>{
+        ...?before,
+        ...patch,
+        'lastEditId': editId,
+      };
+      tx.set(reference, after);
+      tx.set(_firestore.collection('education_edits').doc(editId), {
+        'targetId': id,
+        'actorUid': patch['updatedBy'],
+        'requestId': editId,
+        'operation': create
+            ? 'create'
+            : patch['isDeleted'] == true
+            ? 'softDelete'
+            : 'update',
+        'before': before,
+        'after': after,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
   void _validateTitle(String title, String userId) {
     requireTrimmed(title, 'title');
     requireTrimmed(userId, 'userId');
   }
+}
+
+/// External educational media must never execute arbitrary URL schemes.
+bool isSafeEducationUrl(String value) {
+  final uri = Uri.tryParse(value.trim());
+  return uri != null &&
+      uri.scheme == 'https' &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty;
 }

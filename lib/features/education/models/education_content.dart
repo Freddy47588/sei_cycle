@@ -176,7 +176,7 @@ class EducationContent {
         : <String>[];
 
     return EducationContent(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
       title: stringField(data, const ['title']),
       type: stringField(data, const ['type'], fallback: EducationType.article),
       status: resolvedStatus,

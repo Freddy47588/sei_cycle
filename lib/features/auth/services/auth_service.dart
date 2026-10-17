@@ -1,6 +1,4 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../profile/services/user_profile_service.dart';
 
@@ -41,38 +39,10 @@ class AuthService {
     return credential;
   }
 
-  Future<UserCredential> signInWithGoogle() async {
-    late final UserCredential credential;
+  Future<void> sendPasswordReset(String email) =>
+      _auth.sendPasswordResetEmail(email: email.trim());
 
-    if (kIsWeb) {
-      final provider = GoogleAuthProvider();
-      provider.setCustomParameters({'prompt': 'select_account'});
-      credential = await _auth.signInWithPopup(provider);
-    } else {
-      final googleSignIn = GoogleSignIn.instance;
-      await googleSignIn.initialize();
-      final googleUser = await googleSignIn.authenticate();
-      final googleAuth = googleUser.authentication;
-      final oauthCredential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-      );
-      credential = await _auth.signInWithCredential(oauthCredential);
-    }
-
-    await _ensureProfile(credential);
-    return credential;
-  }
-
-  Future<void> signOut() async {
-    if (!kIsWeb) {
-      try {
-        await GoogleSignIn.instance.signOut();
-      } catch (_) {
-        // Firebase sign-out must proceed even without a local Google session.
-      }
-    }
-    await _auth.signOut();
-  }
+  Future<void> signOut() => _auth.signOut();
 
   Future<void> _ensureProfile(UserCredential credential, {String? name}) async {
     final user = credential.user;

@@ -238,15 +238,13 @@ void main() {
 
     expect(
       recommendations.map((recommendation) => recommendation.type),
-      containsAll(['inventory', 'schedule', 'finance', 'harvest_prediction']),
+      containsAll(['inventory', 'schedule', 'finance']),
     );
     expect(
       recommendations.any(
-        (recommendation) =>
-            recommendation.title.contains('Persiapan panen') &&
-            recommendation.priority == 'high',
+        (recommendation) => recommendation.type == 'harvest_prediction',
       ),
-      isTrue,
+      isFalse,
     );
   });
 

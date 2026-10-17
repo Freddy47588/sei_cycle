@@ -48,11 +48,28 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Future<void> _googleSignIn() {
-    return _run(_authService.signInWithGoogle);
+  Future<void> _resetPassword() async {
+    if (!_emailController.text.trim().contains('@')) {
+      setState(() => _error = 'Masukkan email akun terlebih dahulu.');
+      return;
+    }
+    await _run(() async {
+      await _authService.sendPasswordReset(_emailController.text);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Jika akun tersedia, tautan pengaturan password dikirim ke email.',
+            ),
+          ),
+        );
+      }
+      return null;
+    });
   }
 
   Future<void> _run(Future<Object?> Function() action) async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -135,25 +152,9 @@ class _LoginScreenState extends State<LoginScreen> {
               onPressed: _loading ? null : _submit,
               child: Text(_loading ? 'Sedang masuk...' : 'Masuk'),
             ),
-            const SizedBox(height: 16),
-            const Row(
-              children: [
-                Expanded(child: Divider()),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 10),
-                  child: Text(
-                    'atau',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                  ),
-                ),
-                Expanded(child: Divider()),
-              ],
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: _loading ? null : _googleSignIn,
-              icon: const Icon(Icons.account_circle_outlined),
-              label: const Text('Masuk dengan Google'),
+            TextButton(
+              onPressed: _loading ? null : _resetPassword,
+              child: const Text('Lupa password / atur password akun lama'),
             ),
             const SizedBox(height: 12),
             TextButton(

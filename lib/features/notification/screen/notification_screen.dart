@@ -6,6 +6,7 @@ import '../../../core/utils/operation_feedback.dart';
 import '../../../core/widgets/app_ui.dart';
 import '../../../core/widgets/async_state_widgets.dart';
 import '../../../core/widgets/feature_page.dart';
+import '../../../core/widgets/operational_reference_screen.dart';
 import '../../../theme/app_theme.dart';
 import '../../profile/models/app_user.dart';
 import '../models/app_notification.dart';
@@ -28,6 +29,10 @@ class NotificationScreen extends StatefulWidget {
 class _NotificationScreenState extends State<NotificationScreen> {
   late final NotificationService _service = NotificationService();
   String? _type;
+  bool _unreadOnly = false;
+  Stream<List<AppNotification>>? _stream;
+  String? _streamType;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -35,22 +40,43 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   Future<void> _markAsRead(AppNotification notification) async {
+    if (_busy) return;
     await runOperationWithFeedback(
       context,
-      operation: () => _service.markAsRead(notification.id),
+      operation: () =>
+          _service.markAsRead(notification.id, userId: widget.profile.uid),
       successMessage: 'Notifikasi ditandai sudah dibaca.',
     );
   }
 
   Future<void> _markAllAsRead() async {
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.markAllAsRead(
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await runOperationWithFeedback(
+        context,
+        operation: () => _service.markAllAsRead(
+          userId: widget.profile.uid,
+          role: widget.profile.effectiveRole,
+        ),
+        successMessage: 'Semua notifikasi ditandai sudah dibaca.',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Stream<List<AppNotification>> _notifications() {
+    if (widget.notifications != null) return widget.notifications!;
+    if (_stream == null || _streamType != _type) {
+      _streamType = _type;
+      _stream = _service.watchNotifications(
         userId: widget.profile.uid,
         role: widget.profile.effectiveRole,
-      ),
-      successMessage: 'Semua notifikasi ditandai sudah dibaca.',
-    );
+        type: _type,
+      );
+    }
+    return _stream!;
   }
 
   Future<void> _delete(AppNotification notification) async {
@@ -73,10 +99,20 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Widget build(BuildContext context) {
     return FeaturePage(
       title: 'Notifikasi & Pengingat',
-      subtitle: 'Otomatis dari sistem logbook Kebun Sei',
+      subtitle: 'Inbox aplikasi dan pengingat lokal dari kegiatan tercatat',
       actions: [
+        IconButton(
+          tooltip: 'Muat ulang',
+          onPressed: () => setState(() => _stream = null),
+          icon: const Icon(Icons.refresh),
+        ),
+        FilterChip(
+          label: const Text('Belum dibaca'),
+          selected: _unreadOnly,
+          onSelected: (v) => setState(() => _unreadOnly = v),
+        ),
         OutlinedButton.icon(
-          onPressed: _markAllAsRead,
+          onPressed: _busy ? null : _markAllAsRead,
           icon: const Icon(Icons.done_all_rounded),
           label: const Text('Tandai semua'),
         ),
@@ -105,18 +141,20 @@ class _NotificationScreenState extends State<NotificationScreen> {
           const SizedBox(height: 14),
           Expanded(
             child: StreamBuilder<List<AppNotification>>(
-              stream:
-                  widget.notifications ??
-                  _service.watchNotifications(
-                    userId: widget.profile.uid,
-                    role: widget.profile.effectiveRole,
-                    type: _type,
-                  ),
+              stream: _notifications(),
               builder: (context, snapshot) {
                 final state = asyncSnapshotState(snapshot);
+                if (snapshot.hasError) {
+                  return ErrorState(
+                    message: '${snapshot.error}',
+                    onRetry: () => setState(() => _stream = null),
+                  );
+                }
                 if (state != null) return state;
 
-                final notifications = snapshot.requireData;
+                final notifications = snapshot.requireData
+                    .where((n) => !_unreadOnly || !n.isRead)
+                    .toList();
                 if (notifications.isEmpty) {
                   return const EmptyState(
                     title: 'Belum ada notifikasi',
@@ -144,6 +182,23 @@ class _NotificationScreenState extends State<NotificationScreen> {
                       },
                       child: _NotificationCard(
                         notification: notification,
+                        onOpen:
+                            canOpenOperationalReference(
+                              widget.profile,
+                              notification.relatedCollection,
+                              notification.relatedId,
+                            )
+                            ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => OperationalReferenceScreen(
+                                    profile: widget.profile,
+                                    collection: notification.relatedCollection,
+                                    documentId: notification.relatedId,
+                                  ),
+                                ),
+                              )
+                            : null,
                         onMarkRead: notification.isRead
                             ? null
                             : () => _markAsRead(notification),
@@ -245,11 +300,13 @@ class _DismissibleNotification extends StatelessWidget {
 class _NotificationCard extends StatelessWidget {
   const _NotificationCard({
     required this.notification,
+    this.onOpen,
     required this.onMarkRead,
   });
 
   final AppNotification notification;
   final VoidCallback? onMarkRead;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +353,11 @@ class _NotificationCard extends StatelessWidget {
                         height: 1.35,
                       ),
                     ),
+                    if (onOpen != null)
+                      TextButton(
+                        onPressed: onOpen,
+                        child: const Text('Lihat catatan terkait'),
+                      ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,

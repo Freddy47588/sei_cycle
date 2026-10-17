@@ -4,6 +4,7 @@ import '../../../core/constants/farm_modules.dart';
 import '../../../core/widgets/app_ui.dart';
 import '../../../core/widgets/async_state_widgets.dart';
 import '../../../core/widgets/feature_page.dart';
+import '../../../core/widgets/operational_reference_screen.dart';
 import '../../../theme/app_theme.dart';
 import '../../profile/models/app_user.dart';
 import '../models/recommendation_model.dart';
@@ -43,9 +44,8 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
   @override
   Widget build(BuildContext context) {
     return FeaturePage(
-      title: 'AI Recommendation',
-      subtitle:
-          'Tahap lanjutan untuk prediksi panen, produktivitas, dan rekomendasi berbasis data.',
+      title: 'Rekomendasi Operasional',
+      subtitle: 'Saran berbasis aturan dari catatan operasional terverifikasi.',
       actions: [
         OutlinedButton.icon(
           onPressed: () => setState(_load),
@@ -57,6 +57,12 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
         future: _future,
         builder: (context, snapshot) {
           final state = asyncSnapshotState(snapshot);
+          if (snapshot.hasError) {
+            return ErrorState(
+              message: '${snapshot.error}',
+              onRetry: () => setState(_load),
+            );
+          }
           if (state != null) return state;
 
           final recommendations = snapshot.requireData;
@@ -86,6 +92,7 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
                       if (index == 1) return const _RecommendationNotice();
                       return _RecommendationCard(
                         recommendation: recommendations[index - 2],
+                        profile: widget.profile,
                       );
                     },
                   ),
@@ -119,12 +126,12 @@ class _AdvancedStagePanel extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Tahap Lanjutan',
+                      'Dasar rekomendasi',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Prediksi panen, evaluasi produktivitas, dan rekomendasi berbasis data akan tersedia pada tahap lanjutan.',
+                      'Tanggal panen mengikuti rencana batch yang dicatat. Hasil produksi tetap dibedakan dari estimasi.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppColors.textMuted,
                       ),
@@ -165,7 +172,11 @@ class _RecommendationNotice extends StatelessWidget {
 }
 
 class _RecommendationCard extends StatelessWidget {
-  const _RecommendationCard({required this.recommendation});
+  const _RecommendationCard({
+    required this.recommendation,
+    required this.profile,
+  });
+  final AppUser profile;
 
   final RecommendationModel recommendation;
 
@@ -208,6 +219,35 @@ class _RecommendationCard extends StatelessWidget {
                   recommendation.title,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
+                if (recommendation.recommendedAction.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Tindakan: ${recommendation.recommendedAction}',
+                    ),
+                  ),
+                if (recommendation.sourceCollection != null)
+                  Text(
+                    'Sumber: ${recommendation.sourceCollection}${recommendation.sourceId == null ? '' : '/${recommendation.sourceId}'}',
+                  ),
+                if (canOpenOperationalReference(
+                  profile,
+                  recommendation.sourceCollection ?? '',
+                  recommendation.sourceId ?? '',
+                ))
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => OperationalReferenceScreen(
+                          profile: profile,
+                          collection: recommendation.sourceCollection!,
+                          documentId: recommendation.sourceId!,
+                        ),
+                      ),
+                    ),
+                    child: const Text('Lihat sumber'),
+                  ),
                 const SizedBox(height: 5),
                 Text(
                   recommendation.description,
@@ -227,14 +267,14 @@ class _RecommendationCard extends StatelessWidget {
 
 Color _priorityColor(String priority) => switch (priority) {
   'high' => AppColors.error,
-  'normal' => AppColors.warning,
+  'normal' || 'medium' => AppColors.warning,
   'low' => AppColors.info,
   _ => AppColors.textMuted,
 };
 
 String _priorityLabel(String priority) => switch (priority) {
   'high' => 'Prioritas tinggi',
-  'normal' => 'Prioritas normal',
+  'normal' || 'medium' => 'Prioritas sedang',
   'low' => 'Prioritas rendah',
   _ => priority,
 };

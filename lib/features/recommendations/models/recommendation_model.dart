@@ -11,12 +11,16 @@ class RecommendationModel {
     required this.priority,
     required this.createdAt,
     required this.isResolved,
+    this.recommendedAction = '',
+    this.sourceDate,
     this.moduleType,
     this.sourceCollection,
     this.sourceId,
     this.validUntil,
   });
 
+  final String recommendedAction;
+  final DateTime? sourceDate;
   final String id;
   final String title;
   final String description;
@@ -35,7 +39,11 @@ class RecommendationModel {
     final data = document.data() ?? const <String, dynamic>{};
     final validUntil = data['validUntil'] ?? data['valid_until'];
     return RecommendationModel(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
+      recommendedAction: stringField(data, const ['recommendedAction']),
+      sourceDate: data['sourceDate'] is Timestamp
+          ? (data['sourceDate'] as Timestamp).toDate()
+          : null,
       title: stringField(data, const ['title']),
       description: stringField(data, const ['description']),
       type: stringField(data, const ['type'], fallback: 'insight'),
@@ -55,6 +63,8 @@ class RecommendationModel {
   Map<String, dynamic> toFirestore() {
     return {
       'id': id,
+      'recommendedAction': recommendedAction,
+      if (sourceDate != null) 'sourceDate': Timestamp.fromDate(sourceDate!),
       'title': title,
       'description': description,
       'type': type,

@@ -377,3 +377,6 @@ codex_progress.md
 production-snapshot*.json
 reconciliation-snapshot*.json
 admin-evidence*.json
+
+# Local Kotlin compiler cache
+android/.kotlin/

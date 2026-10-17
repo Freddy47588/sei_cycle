@@ -80,7 +80,7 @@ class AppUser {
       role: stringField(data, const [
         'role',
       ], fallback: AppRoles.legacyPesertaEdukasi),
-      isActive: data['isActive'] != false && data['is_active'] != false,
+      isActive: data['isActive'] != false && data['is_active'] != false && data['isDeleted'] != true,
       createdAt: dateTimeField(data, const ['createdAt', 'created_at']),
       updatedAt: dateTimeField(data, const ['updatedAt', 'updated_at']),
     );

@@ -19,7 +19,8 @@ service cloud.firestore {
     function activeUser() {
       return signedIn() && hasProfile()
         && currentUser().data.get('isActive', true) != false
-        && currentUser().data.get('is_active', true) != false;
+        && currentUser().data.get('is_active', true) != false
+        && currentUser().data.get('isDeleted', false) != true;
     }
 
     function canViewAppData() {
@@ -31,13 +32,8 @@ service cloud.firestore {
     }
 
     function effectiveProfileRole() {
-      return isAdmin()
-        ? 'admin'
-        : isOperatorLapangan()
-          ? 'operator_lapangan'
-          : isOperatorKeuangan()
-            ? 'operator_keuangan'
-            : profileRole();
+      let role = currentUser().data.role;
+      return role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin '] ? 'admin' : role == 'operator' ? 'operator_lapangan' : role;
     }
 
     function hasRole(role) {
@@ -61,14 +57,7 @@ service cloud.firestore {
     */
 
     function isAdmin() {
-      return hasAnyRole([
-        'admin',
-        'Admin',
-        'ADMIN',
-        ' admin',
-        'admin ',
-        ' admin '
-      ]);
+      return activeUser() && currentUser().data.role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin '];
     }
 
     function isOperatorLapangan() {
@@ -166,6 +155,7 @@ service cloud.firestore {
     function userCanUpdateOwnProfile(uid) {
       return signedIn()
         && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/admin_tombstones/$('users__' + uid))
         && request.resource.data.uid == uid
         && request.resource.data.id == uid
 
@@ -190,8 +180,7 @@ service cloud.firestore {
       return activeUser() && (
         isAdmin()
         || data.userId == request.auth.uid
-        || data.targetRole == 'all'
-        || data.targetRole == effectiveProfileRole()
+        || (data.userId == '' && (data.targetRole == 'all' || data.targetRole == effectiveProfileRole()))
       );
     }
 
@@ -287,27 +276,19 @@ service cloud.firestore {
       allow create: if (
         signedIn()
         && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/admin_tombstones/$('users__' + uid))
         && request.resource.data.uid == uid
         && request.resource.data.id == uid
 
         // default sesuai rules branch backend yang kamu kirim
         && request.resource.data.role == 'operator_lapangan'
         && request.resource.data.isActive == true
-      ) || (
-        isAdmin()
-        && request.resource.data.uid == uid
-        && request.resource.data.id == uid
-        && supportedRole(request.resource.data.role)
       );
 
       allow read: if signedIn();
 
-      allow update: if (
-        isAdmin()
-        && supportedRole(request.resource.data.role)
-      ) || userCanUpdateOwnProfile(uid);
-
-      allow delete: if isAdmin();
+      allow update: if userCanUpdateOwnProfile(uid);
+      allow delete: if false;
     }
 
     /*
@@ -540,7 +521,7 @@ service cloud.firestore {
           && request.resource.data.id == resultId
           && request.resource.data.createdBy == request.auth.uid
         );
-      allow update, delete: if isAdmin();
+      allow update, delete: if false;
     }
 
     /*
@@ -638,12 +619,34 @@ service cloud.firestore {
       Semua user login bisa lihat tampilan edukasi.
       Hanya admin yang bisa lihat dan kelola semua status.
     */
+    function validEducationAudit(contentId, afterData) {
+      let editId = afterData.lastEditId;
+      let audit = getAfter(/databases/$(database)/documents/education_edits/$(editId)).data;
+      return !exists(/databases/$(database)/documents/education_edits/$(editId))
+        && audit.targetId == contentId && audit.actorUid == request.auth.uid
+        && audit.createdAt == request.time && audit.after == afterData
+        && afterData.updatedAt == request.time && afterData.updatedBy == request.auth.uid;
+    }
     match /education_contents/{contentId} {
-      allow read: if canViewAppData();
-
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow read: if isAdmin() || (activeUser() && resource.data.status == 'published' && resource.data.get('isDeleted', false) != true);
+      allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time && actualReference(request.resource.data)
+        && validEducationAudit(contentId, request.resource.data)
+        && getAfter(/databases/$(database)/documents/education_edits/$(request.resource.data.lastEditId)).data.before == null;
+      allow update: if isAdmin() && validEducationAudit(contentId, request.resource.data)
+        && getAfter(/databases/$(database)/documents/education_edits/$(request.resource.data.lastEditId)).data.before == resource.data;
+      allow delete: if false;
+    }
+    match /education_edits/{editId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.keys().hasOnly(['targetId','actorUid','requestId','operation','before','after','createdAt'])
+        && request.resource.data.requestId == editId && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.after == getAfter(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)).data
+        && request.resource.data.after.lastEditId == editId
+        && ((!exists(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)) && request.resource.data.before == null)
+          || request.resource.data.before == get(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)).data);
+      allow update, delete: if false;
     }
 
     /*
@@ -775,14 +778,14 @@ service cloud.firestore {
       Admin bisa baca dan hapus semua.
     */
     match /notifications/{notificationId} {
-      allow read: if canViewAppData();
+      allow read: if canReadNotification(resource.data);
 
       allow create: if isAdmin()
         || userCanCreateOwnNotification(notificationId)
         || adminCanCreateSystemNotification(notificationId);
 
       allow update: if (
-          canReadNotification(resource.data)
+          activeUser() && resource.data.userId == request.auth.uid
           && request.resource.data.id == resource.data.id
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'isRead',
@@ -847,8 +850,44 @@ service cloud.firestore {
       Collection ini disiapkan untuk snapshot rekomendasi manual/admin-side.
     */
     match /recommendations/{recommendationId} {
-      allow read: if canViewAppData();
+      allow read: if isAdmin() || (activeUser() && (resource.data.get('type', '') != 'finance' || canManageFinance()));
       allow create, update, delete: if isAdmin();
+    }
+
+    match /notification_receipts/{uid}/items/{id} {
+      allow read: if activeUser() && request.auth.uid == uid;
+      allow create, update: if activeUser() && request.auth.uid == uid
+        && canReadNotification(get(/databases/$(database)/documents/notifications/$(id)).data)
+        && request.resource.data.keys().hasOnly(['readAt'])
+        && request.resource.data.readAt == request.time;
+      allow delete: if false;
+    }
+    // Privileged mutations run only in the trusted worker; clients submit commands.
+    match /admin_requests/{requestId} {
+      allow read: if isAdmin() && resource.data.actorUid == request.auth.uid;
+      allow create: if isAdmin()
+        && requestId.matches('[A-Za-z0-9_-]{1,128}')
+        && request.resource.data.keys().hasOnly(['actorUid', 'kind', 'targetPath', 'operation', 'reason', 'patch', 'previewId', 'status', 'createdAt'])
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.kind in ['preview', 'execute']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.targetPath is string
+        && request.resource.data.operation in ['create', 'update', 'archive', 'softDelete', 'delete', 'reverse', 'deleteIdentity', 'restore']
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 5
+        && request.resource.data.reason.size() <= 1000 && request.resource.data.patch is map
+        && request.resource.data.previewId is string;
+      allow update, delete: if false;
+    }
+    match /admin_identity_jobs/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /admin_audit/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /admin_backups/{document=**} { allow read, write: if false; }
+    match /admin_tombstones/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     /*

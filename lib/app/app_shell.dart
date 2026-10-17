@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../features/schedule/services/reminder_sync_service.dart';
 import 'package:intl/intl.dart';
 
+import '../features/admin/screen/admin_management_screen.dart';
 import '../features/dashboard/screen/dashboard_screen.dart';
 import '../features/education/screen/education_screen.dart';
 import '../features/finance/screen/finance_screen.dart';
@@ -177,6 +178,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         icon: Icons.recycling_outlined,
         selectedIcon: Icons.recycling,
         builder: () => CircularFlowScreen(profile: widget.profile),
+      ),
+    if (widget.profile.isActive && widget.profile.isAdmin)
+      _Destination(
+        label: 'Kelola Data Admin',
+        icon: Icons.admin_panel_settings_outlined,
+        selectedIcon: Icons.admin_panel_settings,
+        builder: () => AdminManagementScreen(profile: widget.profile),
       ),
   ];
 

@@ -1,0 +1,8 @@
+{
+  "name": "seicycle-admin-worker",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node worker.mjs", "test": "node --test management.test.mjs" },
+  "dependencies": { "firebase-admin": "14.5.0" }
+}

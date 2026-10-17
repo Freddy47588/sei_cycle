@@ -48,7 +48,9 @@ bool isOperationalRecord(Map<String, dynamic> data) {
   if (d.containsKey('isDeleted') && d['isDeleted'] is! bool) {
     throw const FormatException('Penanda penghapusan tidak valid.');
   }
-  return !isSeedOrigin(d) && d['isDeleted'] != true;
+  return !isSeedOrigin(d) &&
+      d['isDeleted'] != true &&
+      !(d['adminReversed'] == true && d['isReversed'] != true);
 }
 
 void requireReviewedProvenance(Map<String, dynamic> data) {
@@ -260,6 +262,16 @@ class OperationalIntegrity {
         // Historical stock events remain readable after a master is retired.
         // This never recreates a master or derives current stock from history.
         if (!parent.exists && ref.value == 'inventory') continue;
+        final historicalReversal =
+            doc.reference.path.startsWith('inventory_transactions/') &&
+            d['adminReversed'] == true &&
+            d['isReversed'] == true;
+        if (historicalReversal &&
+            {'logbooks', 'sales'}.contains(ref.value) &&
+            (!parent.exists || parent.data()?['adminReversed'] == true)) {
+          continue;
+        }
+
         if (!parent.exists || !isOperationalRecord(parent.data() ?? {})) {
           throw OperationalReferenceConflict();
         }

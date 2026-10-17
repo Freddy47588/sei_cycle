@@ -32,12 +32,13 @@ class AppNotification {
   final bool isDeleted;
 
   factory AppNotification.fromDocument(
-    DocumentSnapshot<Map<String, dynamic>> document,
-  ) {
+    DocumentSnapshot<Map<String, dynamic>> document, {
+    bool? readOverride,
+  }) {
     final data = document.data() ?? const <String, dynamic>{};
     final scheduledValue = fieldValue(data, const ['scheduledAt']);
     return AppNotification(
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
       title: stringField(data, const ['title']),
       body: stringField(data, const ['body', 'description']),
       type: stringField(data, const ['type'], fallback: 'system'),
@@ -45,7 +46,7 @@ class AppNotification {
       userId: stringField(data, const ['userId']),
       relatedCollection: stringField(data, const ['relatedCollection']),
       relatedId: stringField(data, const ['relatedId']),
-      isRead: boolField(data, const ['isRead']),
+      isRead: readOverride ?? boolField(data, const ['isRead']),
       createdAt: dateTimeField(data, const ['createdAt']),
       scheduledAt: scheduledValue == null
           ? null

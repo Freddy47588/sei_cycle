@@ -24,22 +24,10 @@ class NotificationService {
   /// Streams the count of unread notifications for the given user/role.
   /// Useful for showing a badge count in navigation.
   Stream<int> watchUnreadCount({required String userId, required String role}) {
-    requireTrimmed(userId, 'userId');
-    requireTrimmed(role, 'role');
-
-    final ownQuery = _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('isRead', isEqualTo: false)
-        .where('userId', isEqualTo: userId);
-    final roleQuery = _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('isRead', isEqualTo: false)
-        .where('targetRole', whereIn: [role, 'all']);
-
-    return _watchCombined(
-      ownQuery,
-      roleQuery,
-    ).asyncMap(_excludeSeedReferences).map((docs) => docs.length);
+    return watchNotifications(
+      userId: userId,
+      role: role,
+    ).map((items) => items.where((n) => !n.isRead).length);
   }
 
   Stream<List<AppNotification>> watchNotifications({
@@ -55,7 +43,8 @@ class NotificationService {
         .where('userId', isEqualTo: userId);
     Query<Map<String, dynamic>> roleQuery = _collection
         .where('isDeleted', isEqualTo: false)
-        .where('targetRole', whereIn: [role, 'all']);
+        .where('targetRole', whereIn: [role, 'all'])
+        .where('userId', isEqualTo: '');
     if (type != null && type.trim().isNotEmpty) {
       ownQuery = ownQuery.where('type', isEqualTo: type.trim());
       roleQuery = roleQuery.where('type', isEqualTo: type.trim());
@@ -64,9 +53,34 @@ class NotificationService {
     return _watchCombined(
       ownQuery.orderBy('createdAt', descending: true),
       roleQuery.orderBy('createdAt', descending: true),
-    ).asyncMap(_excludeSeedReferences).map((docs) {
-      final notifications = docs.map(AppNotification.fromDocument).toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      receipts: _firestore
+          .collection('notification_receipts')
+          .doc(userId)
+          .collection('items'),
+    ).asyncMap(_excludeSeedReferences).asyncMap((docs) async {
+      final notifications = <AppNotification>[];
+      for (final doc in docs) {
+        final data = doc.data();
+        bool? override;
+        if (data['userId'] == '') {
+          final receipt = await _firestore
+              .collection('notification_receipts')
+              .doc(userId)
+              .collection('items')
+              .doc(doc.id)
+              .get();
+          final readAt = receipt.data()?['readAt'];
+          final createdAt = data['createdAt'];
+          override =
+              readAt is Timestamp &&
+              createdAt is Timestamp &&
+              readAt.compareTo(createdAt) >= 0;
+        }
+        notifications.add(
+          AppNotification.fromDocument(doc, readOverride: override),
+        );
+      }
+      notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return notifications;
     });
   }
@@ -106,12 +120,28 @@ class NotificationService {
     return visible;
   }
 
-  Future<void> markAsRead(String id) {
+  Future<void> markAsRead(String id, {required String userId}) async {
     requireWritesEnabled();
     requireTrimmed(id, 'id');
-    return _collection.doc(id).update({
-      'isRead': true,
-      'readAt': FieldValue.serverTimestamp(),
+    requireTrimmed(userId, 'userId');
+    await _firestore.runTransaction((tx) async {
+      final notification = await tx.get(_collection.doc(id));
+      if (!notification.exists) throw StateError('Notifikasi tidak ditemukan.');
+      if (notification.data()?['userId'] == userId) {
+        tx.update(notification.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        tx.set(
+          _firestore
+              .collection('notification_receipts')
+              .doc(userId)
+              .collection('items')
+              .doc(id),
+          {'readAt': FieldValue.serverTimestamp()},
+        );
+      }
     });
   }
 
@@ -131,33 +161,11 @@ class NotificationService {
     required String role,
   }) async {
     requireWritesEnabled();
-    final ownSnapshot = await _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('isRead', isEqualTo: false)
-        .where('userId', isEqualTo: userId)
-        .limit(50)
-        .get();
-    final roleSnapshot = await _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('isRead', isEqualTo: false)
-        .where('targetRole', whereIn: [role, 'all'])
-        .limit(50)
-        .get();
-
-    final documents = {
-      for (final document in ownSnapshot.docs) document.id: document,
-      for (final document in roleSnapshot.docs) document.id: document,
-    }.values;
-
-    if (documents.isEmpty) return;
-    final batch = _firestore.batch();
-    for (final document in documents) {
-      batch.update(document.reference, {
-        'isRead': true,
-        'readAt': FieldValue.serverTimestamp(),
-      });
+    final items = await watchNotifications(userId: userId, role: role).first;
+    // The bounded stream rejects incomplete input instead of claiming all were read.
+    for (final item in items.where((n) => !n.isRead)) {
+      await markAsRead(item.id, userId: userId);
     }
-    await batch.commit();
   }
 
   Future<String> create({
@@ -172,26 +180,49 @@ class NotificationService {
     DateTime? scheduledAt,
   }) async {
     requireWritesEnabled();
-    requireWritesEnabled();
     requireTrimmed(title, 'title');
     requireTrimmed(body, 'body');
     requireTrimmed(type, 'type');
 
     final documentId = id ?? _uuid.v4();
-    await _collection.doc(documentId).set({
-      'id': documentId,
-      'title': title.trim(),
-      'body': body.trim(),
-      'type': type.trim(),
-      'targetRole': targetRole.trim().isEmpty ? 'all' : targetRole.trim(),
-      'userId': userId.trim(),
-      'relatedCollection': relatedCollection.trim(),
-      'relatedId': relatedId.trim(),
-      'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      if (scheduledAt != null) 'scheduledAt': Timestamp.fromDate(scheduledAt),
-      'isDeleted': false,
-    }, SetOptions(merge: true));
+    await _firestore.runTransaction((tx) async {
+      final ref = _collection.doc(documentId);
+      final old = await tx.get(ref);
+      if (old.exists &&
+          old.data()?['title'] == title.trim() &&
+          old.data()?['body'] == body.trim() &&
+          old.data()?['type'] == type &&
+          old.data()?['userId'] == userId &&
+          old.data()?['targetRole'] == targetRole &&
+          old.data()?['scheduledAt'] ==
+              (scheduledAt == null ? null : Timestamp.fromDate(scheduledAt))) {
+        return;
+      }
+      if (relatedCollection == 'schedules') {
+        final schedule = await tx.get(
+          _firestore.collection('schedules').doc(relatedId),
+        );
+        if (!schedule.exists ||
+            !isOperationalRecord(schedule.data()!) ||
+            schedule.data()?['status'] != 'pending') {
+          return;
+        }
+      }
+      tx.set(ref, {
+        'id': documentId,
+        'title': title.trim(),
+        'body': body.trim(),
+        'type': type.trim(),
+        'targetRole': targetRole.trim().isEmpty ? 'all' : targetRole.trim(),
+        'userId': userId.trim(),
+        'relatedCollection': relatedCollection.trim(),
+        'relatedId': relatedId.trim(),
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        if (scheduledAt != null) 'scheduledAt': Timestamp.fromDate(scheduledAt),
+        'isDeleted': false,
+      });
+    });
     return documentId;
   }
 
@@ -233,7 +264,7 @@ class NotificationService {
     await _firestore.runTransaction((tx) async {
       final item = await tx.get(_firestore.collection('inventory').doc(itemId));
       final existing = await tx.get(_collection.doc(id));
-      if (!item.exists) return;
+      if (!item.exists || !isOperationalRecord(item.data()!)) return;
       final actual = InventoryItem.fromDocument(item);
       if (!actual.isLowStock || actual.isDeleted) {
         if (existing.exists && existing.data()?['isDeleted'] != true) {
@@ -313,6 +344,7 @@ class NotificationService {
       final d = schedule.data();
       final date = (d?['date'] as Timestamp?)?.toDate();
       if (!schedule.exists ||
+          !isOperationalRecord(d ?? {}) ||
           d?['isDeleted'] == true ||
           d?['status'] != 'pending' ||
           date == null ||
@@ -389,12 +421,14 @@ String _number(double value) => value == value.roundToDouble()
 
 Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _watchCombined(
   Query<Map<String, dynamic>> first,
-  Query<Map<String, dynamic>> second,
-) {
+  Query<Map<String, dynamic>> second, {
+  Query<Map<String, dynamic>>? receipts,
+}) {
   late final StreamController<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
   controller;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? firstSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? secondSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? receiptSubscription;
   QuerySnapshot<Map<String, dynamic>>? firstSnapshot;
   QuerySnapshot<Map<String, dynamic>>? secondSnapshot;
 
@@ -422,6 +456,10 @@ Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _watchCombined(
   controller =
       StreamController<List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
         onListen: () {
+          receiptSubscription = receipts?.snapshots().listen(
+            (_) => emit(),
+            onError: controller.addError,
+          );
           firstSubscription = first.limit(501).snapshots().listen((snapshot) {
             firstSnapshot = snapshot;
             emit();
@@ -432,6 +470,7 @@ Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _watchCombined(
           }, onError: controller.addError);
         },
         onCancel: () async {
+          await receiptSubscription?.cancel();
           await firstSubscription?.cancel();
           await secondSubscription?.cancel();
         },

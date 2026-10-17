@@ -1,13 +1,15 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../../../core/constants/firestore_collections.dart';
 import '../../../core/utils/legacy_firestore.dart';
 import '../../../core/utils/sample_data_guard.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../core/constants/firestore_collections.dart';
 import '../models/dashboard_filter.dart';
 import '../models/productivity_point.dart';
 
 class ProductivityService {
   ProductivityService({FirebaseFirestore? firestore})
     : _db = firestore ?? FirebaseFirestore.instance;
+
   final FirebaseFirestore _db;
 
   Future<ProductivityReport> load(
@@ -19,56 +21,73 @@ class ProductivityService {
       completeCollection(_db, FirestoreCollections.logbooks),
       completeCollection(_db, FirestoreCollections.productionResults),
     ]);
-    List<AnalyticsDocument> select(int index, String date) => snapshots[index]
-        .where((d) => isOperationalRecord(d.data()))
-        .map((d) => AnalyticsDocument(d.id, legacyFields(d.data())))
-        .where(
-          (d) =>
-              d.data['moduleType'] == module &&
-              (batchId == null || d.data['batchId'] == batchId),
-        )
-        .where((d) {
-          if (d.data[date] is! Timestamp) {
-            throw const FormatException('Tanggal produktivitas tidak valid.');
-          }
-          return filter.contains((d.data[date] as Timestamp).toDate());
-        })
-        .toList();
+
+    List<AnalyticsDocument> select(int index, String dateField) =>
+        snapshots[index]
+            .where((doc) => isOperationalRecord(doc.data()))
+            .map((doc) => AnalyticsDocument(doc.id, legacyFields(doc.data())))
+            .where(
+              (doc) =>
+                  doc.data['moduleType'] == module &&
+                  (batchId == null || doc.data['batchId'] == batchId),
+            )
+            .where((doc) {
+              final value = doc.data[dateField];
+              if (value is! Timestamp) {
+                throw const FormatException(
+                  'Tanggal produktivitas tidak valid.',
+                );
+              }
+              return filter.contains(value.toDate());
+            })
+            .toList();
+
     final logs = select(0, 'activityDate');
     final production = select(1, 'harvestDate');
-    final selectedIds = {
-      ...logs.map((d) => 'logbooks/${d.id}'),
-      ...production.map((d) => 'production_results/${d.id}'),
+    final selectedIds = <String>{
+      ...logs.map((doc) => 'logbooks/${doc.id}'),
+      ...production.map((doc) => 'production_results/${doc.id}'),
     };
-    await OperationalIntegrity(_db).check(
-      snapshots
-          .expand((s) => s)
-          .where((d) => selectedIds.contains(d.reference.path)),
-    );
+
+    // Isolate only known reference conflicts. Never swallow permission errors,
+    // malformed data, network errors, or other integrity failures.
+    var productionIntegrityUncertain = false;
+    try {
+      await OperationalIntegrity(_db).check(
+        snapshots
+            .expand((collection) => collection)
+            .where((doc) => selectedIds.contains(doc.reference.path)),
+      );
+    } on OperationalReferenceConflict {
+      // Independent observations may still be shown, but the production
+      // aggregate remains unverified while required references are invalid.
+      productionIntegrityUncertain = true;
+    }
+
     final parentIds = production
-        .map((d) => d.data['logbookId'])
+        .map((doc) => doc.data['logbookId'])
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList();
+
     final parents = <String, Map<String, dynamic>>{};
-    // A parent can be outside activityDate range: harvestDate is independently recorded.
+    // A parent can be outside activityDate range: harvestDate is independent.
     for (var offset = 0; offset < parentIds.length; offset += 30) {
+      final ids = parentIds.skip(offset).take(30).toList();
       final docs = await _db
           .collection(FirestoreCollections.logbooks)
-          .where(
-            FieldPath.documentId,
-            whereIn: parentIds.skip(offset).take(30).toList(),
-          )
+          .where(FieldPath.documentId, whereIn: ids)
           .limit(30)
           .get(const GetOptions(source: Source.server));
       for (final doc in docs.docs) {
         parents[doc.id] = legacyFields(doc.data());
       }
     }
+
     return calculateProductivity(
       samplesExcluded: snapshots.any(
-        (s) => s.any((d) => isSeedOrigin(d.data())),
+        (collection) => collection.any((doc) => isSeedOrigin(doc.data())),
       ),
       filter: filter,
       module: module,
@@ -78,6 +97,7 @@ class ProductivityService {
       parents: parents,
       logsTruncated: false,
       productionTruncated: false,
+      productionIntegrityUncertain: productionIntegrityUncertain,
     );
   }
 }

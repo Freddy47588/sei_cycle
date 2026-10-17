@@ -89,6 +89,7 @@ ProductivityReport calculateProductivity({
   bool samplesExcluded = false,
   bool logsTruncated = false,
   bool productionTruncated = false,
+  bool productionIntegrityUncertain = false,
 }) {
   bool matches(Map<String, dynamic> d, String field) =>
       !hasSampleMarker(d) &&
@@ -161,7 +162,7 @@ ProductivityReport calculateProductivity({
   final totals = <String, double>{};
   final dailyProduction = <String, Map<DateTime, double>>{};
   final productionUnits = <String, String>{};
-  var uncertain = productionTruncated;
+  var uncertain = productionTruncated || productionIntegrityUncertain;
   final seen = <String>{};
   for (final item in production) {
     final d = item.data;

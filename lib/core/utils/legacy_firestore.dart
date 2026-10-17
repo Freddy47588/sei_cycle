@@ -190,6 +190,16 @@ FirestorePage<T> compatibilityPage<T>(
   );
 }
 
+/// A reference-integrity failure that observation-only charts can isolate from
+/// network, permission, and malformed-data failures.
+class OperationalReferenceConflict extends StateError {
+  OperationalReferenceConflict()
+    : super(
+        'Belum dapat dihitung: referensi histori tidak tersedia atau belum '
+        'valid. Minta pengelola memeriksa data terkait.',
+      );
+}
+
 /// Check real-to-seed references without erasing either side. Cache is scoped
 /// to this load only; do not assume a previous audit remains current.
 class OperationalIntegrity {
@@ -251,9 +261,7 @@ class OperationalIntegrity {
         // This never recreates a master or derives current stock from history.
         if (!parent.exists && ref.value == 'inventory') continue;
         if (!parent.exists || !isOperationalRecord(parent.data() ?? {})) {
-          throw StateError(
-            'Belum dapat dihitung: referensi histori tidak tersedia atau belum valid. Minta pengelola memeriksa data terkait.',
-          );
+          throw OperationalReferenceConflict();
         }
         await check([parent]);
       }

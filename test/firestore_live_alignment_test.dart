@@ -369,7 +369,7 @@ void main() {
   );
 
   test(
-    'real ledger referencing a seed master blocks stock KPI, keeps evidence',
+    'current stock KPI excludes seed masters without replaying historical ledger',
     () async {
       final db = MemoryFirestore();
       db.documents['farm_modules/lele'] = {
@@ -391,8 +391,9 @@ void main() {
         clock: () => date,
       ).load(includeFinance: false);
       expect(result.activeModuleCount, 1);
-      expect(result.lowStockCount, isNull);
-      expect(result.sectionErrors['inventory'], isA<StateError>());
+      expect(result.lowStockCount, 0);
+      expect(result.outOfStockCount, 0);
+      expect(result.sectionErrors['inventory'], isNull);
       expect(db.documents['inventory/seed'], before);
     },
   );

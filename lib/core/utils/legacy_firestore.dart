@@ -247,9 +247,12 @@ class OperationalIntegrity {
               .doc(id)
               .get(const GetOptions(source: Source.server)),
         );
+        // Historical stock events remain readable after a master is retired.
+        // This never recreates a master or derives current stock from history.
+        if (!parent.exists && ref.value == 'inventory') continue;
         if (!parent.exists || !isOperationalRecord(parent.data() ?? {})) {
           throw StateError(
-            'Belum dapat dihitung: DATA INTEGRITY CONFLICT. Referensi operasional hilang, terhapus, atau berasal dari simulasi. Minta rekonsiliasi pengelola.',
+            'Belum dapat dihitung: referensi histori tidak tersedia atau belum valid. Minta pengelola memeriksa data terkait.',
           );
         }
         await check([parent]);

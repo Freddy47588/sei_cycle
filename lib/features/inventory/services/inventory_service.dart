@@ -70,7 +70,7 @@ class InventoryService {
     for (final d in docs) {
       if (!ids.add(d.id)) {
         throw StateError(
-          'Identitas inventory legacy ambigu; perlu rekonsiliasi.',
+          'Identitas barang lama ambigu; perlu ditinjau pengelola.',
         );
       }
     }
@@ -199,7 +199,7 @@ class InventoryService {
       }
       if (item.legacyReadOnly) {
         throw StateError(
-          'Master legacy hanya dapat dibaca sampai rekonsiliasi selesai.',
+          'Master barang lama hanya dapat dibaca. Hubungi pengelola untuk perubahan.',
         );
       }
       final ref = _collection.doc(item.id);
@@ -403,7 +403,9 @@ class InventoryService {
         .toList();
     final real = matches.where((d) => isOperationalRecord(d.data())).toList();
     if (real.length > 1) {
-      throw StateError('Master barang operasional ganda; perlu rekonsiliasi.');
+      throw StateError(
+        'Master barang operasional ganda; perlu ditinjau pengelola.',
+      );
     }
     if (real.isNotEmpty) {
       requireOperationalData(real);

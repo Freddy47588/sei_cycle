@@ -85,11 +85,8 @@ class ReportService {
         operationalCollection(_firestore, 'inventory'),
         operationalCollection(_firestore, 'inventory_items'),
       ]);
-      final ledger = await operationalCollection(
-        _firestore,
-        'inventory_transactions',
-      );
-      await OperationalIntegrity(_firestore).check(ledger);
+      // This section reports the current recorded masters, independently of
+      // historic ledger links to masters removed during administrative cleanup.
       final docs = sources.expand((s) => s).toList();
       final ids = <String>{};
       for (final doc in docs) {

@@ -286,13 +286,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       'Terakhir diperbarui: ${DateFormat('d MMM yyyy HH:mm:ss', 'id_ID').format(summary.updatedAt!)}',
                     ),
                   const SizedBox(height: 12),
-                  if (summary.samplesExcluded)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        'Data bertanda sampel tidak disertakan. Data nyata tetap ditampilkan; pengelola dapat meninjau sampel tanpa menghapus data asli.',
-                      ),
-                    ),
                   for (final entry in summary.sectionErrors.entries)
                     if (!['finance', 'sales'].contains(entry.key))
                       Card(

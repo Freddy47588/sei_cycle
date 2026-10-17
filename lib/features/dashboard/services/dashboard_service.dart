@@ -117,9 +117,8 @@ class DashboardService {
       }),
       section('inventory', () async {
         final docs = await read('inventory');
-        // Non-seed ledger activity against seed masters must block stock KPIs.
-        final ledger = await read('inventory_transactions');
-        await OperationalIntegrity(_firestore).check(ledger);
+        // Current stock KPIs describe recorded active masters. Historical
+        // ledger entries can outlive a retired master and are not replayed here.
         final legacy = await read('inventory_items');
         final all = [...docs, ...legacy];
         final ids = <String>{};

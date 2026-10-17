@@ -56,7 +56,9 @@ class _FinanceScreenState extends State<FinanceScreen> {
     _reloadSummary();
   });
   Future<void> _openForm([FinanceRecord? record]) async {
-    if (!widget.profile.canManageFinance || (record?.isSaleLinked ?? false)) {
+    if (!widget.profile.canManageFinance ||
+        ((record?.isSaleLinked ?? false) ||
+            (record?.legacyReadOnly ?? false))) {
       return;
     }
     final saved = await showDialog<bool>(
@@ -77,6 +79,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
   }
 
   Future<void> _delete(FinanceRecord record) async {
+    if (record.legacyReadOnly) return;
     final confirmed = await confirmDelete(
       context,
       title: 'Hapus transaksi?',
@@ -100,7 +103,13 @@ class _FinanceScreenState extends State<FinanceScreen> {
   Future<void> _detail(FinanceRecord r) => Navigator.push(
     context,
     MaterialPageRoute<void>(
-      builder: (_) => FinanceDetailScreen(id: r.id, profile: widget.profile),
+      builder: (_) => FinanceDetailScreen(
+        id: r.id,
+        sourceCollection: r.legacyReadOnly
+            ? 'finance_records'
+            : 'finance_transactions',
+        profile: widget.profile,
+      ),
     ),
   );
 
@@ -111,7 +120,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
     return FeaturePage(
       title: 'Keuangan',
-      subtitle: 'Pemasukan - Pengeluaran = Arus Kas Bersih',
+      subtitle:
+          'Pemasukan - Pengeluaran = Arus Kas Bersih. Data bertanda sampel tidak disertakan.',
       actions: [
         IconButton(
           onPressed: _refresh,
@@ -255,8 +265,16 @@ class _FinanceScreenState extends State<FinanceScreen> {
                 onTap: () => _detail(r),
                 child: _FinanceRecordCard(
                   record: r,
-                  canEdit: widget.profile.canManageFinance && !r.isSaleLinked,
-                  canDelete: widget.profile.canDeleteFinance && !r.isSaleLinked,
+                  canEdit:
+                      widget.profile.canManageFinance &&
+                      !r.isSaleLinked &&
+                      !r.legacyReadOnly &&
+                      !r.requiresProvenanceReview,
+                  canDelete:
+                      widget.profile.canDeleteFinance &&
+                      !r.isSaleLinked &&
+                      !r.legacyReadOnly &&
+                      !r.requiresProvenanceReview,
                   onEdit: () => _openForm(r),
                   onDelete: () => _delete(r),
                 ),
@@ -408,6 +426,10 @@ class _FinanceRecordCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (record.legacyReadOnly)
+                  const Text('Arsip legacy - hanya baca'),
+                if (record.requiresProvenanceReview)
+                  const Text('Provenance perlu review pengelola'),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

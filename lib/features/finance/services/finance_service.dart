@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -24,15 +25,67 @@ class FinanceService {
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(FirestoreCollections.financeTransactions);
 
-  Stream<List<FinanceRecord>> watchRecords() {
-    return _collection
-        .where('isDeleted', isEqualTo: false)
-        .orderBy('date', descending: true)
-        .limit(100)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs.map(FinanceRecord.fromDocument).toList(),
+  Stream<List<FinanceRecord>> watchRecords() =>
+      watchOperationalCollections(_firestore, [
+        'finance_transactions',
+        'finance_records',
+      ]).map(
+        (docs) =>
+            docs.map(FinanceRecord.fromDocument).toList()
+              ..sort((a, b) => b.date.compareTo(a.date)),
+      );
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  compatibleDocuments({
+    DateTime? start,
+    DateTime? end,
+    String? type,
+    String? category,
+    String? moduleType,
+    bool verifyIntegrity = false,
+  }) async {
+    final results = await Future.wait([
+      operationalCollection(_firestore, 'finance_transactions'),
+      operationalCollection(_firestore, 'finance_records'),
+    ]);
+    final identities = <String>{};
+    final docs = [...results[0], ...results[1]];
+    for (final doc in docs) {
+      final d = legacyFields(doc.data());
+      if (verifyIntegrity) requireReviewedProvenance(d);
+      if (!identities.add(doc.id)) {
+        throw StateError(
+          'Belum dapat dihitung: identitas finance legacy ambigu.',
         );
+      }
+      if (d['date'] is! Timestamp ||
+          d['amount'] is! num ||
+          !(d['amount'] as num).isFinite ||
+          (d['amount'] as num) <= 0 ||
+          !_validTypes.contains(d['type'])) {
+        throw const FormatException(
+          'Transaksi keuangan atau tanggal tidak valid; ringkasan tidak dihitung sebagai nol.',
+        );
+      }
+    }
+    final selected =
+        docs.where((doc) {
+          final r = FinanceRecord.fromDocument(doc);
+          return (start == null || !r.date.isBefore(start)) &&
+              (end == null || r.date.isBefore(end)) &&
+              (type == null || r.type == type) &&
+              (category == null || r.category == category) &&
+              (moduleType == null || r.moduleType == moduleType);
+        }).toList()..sort((a, b) {
+          final order = FinanceRecord.fromDocument(
+            b,
+          ).date.compareTo(FinanceRecord.fromDocument(a).date);
+          return order == 0
+              ? a.reference.path.compareTo(b.reference.path)
+              : order;
+        });
+    if (verifyIntegrity) await OperationalIntegrity(_firestore).check(selected);
+    return selected;
   }
 
   Future<FinanceSummary> loadCurrentMonthSummary({DateTime? now}) {
@@ -50,32 +103,16 @@ class FinanceService {
     String? moduleType,
   }) async {
     _validateDateRange(start: start, end: end);
-    await requireNoSampleData(_firestore, ['finance_transactions']);
-    final snapshot = await _query(
+    final docs = await compatibleDocuments(
       start: start,
       end: end,
       type: type,
       category: category,
       moduleType: moduleType,
-    ).limit(501).get();
-    if (snapshot.docs.length > 500) {
-      throw StateError(
-        'Lebih dari 500 transaksi. Persempit periode/filter untuk ringkasan lengkap.',
-      );
-    }
-    for (final doc in snapshot.docs) {
-      final d = doc.data();
-      if (d['amount'] is! num ||
-          !(d['amount'] as num).isFinite ||
-          (d['amount'] as num) <= 0 ||
-          !_validTypes.contains(d['type'])) {
-        throw StateError(
-          'Transaksi tidak valid. Ringkasan memerlukan pemeriksaan pengelola.',
-        );
-      }
-    }
+      verifyIntegrity: true,
+    );
     return cashflowSummary(
-      snapshot.docs.map(FinanceRecord.fromDocument),
+      docs.map(FinanceRecord.fromDocument),
       start: start,
       end: end,
     );
@@ -89,24 +126,6 @@ class FinanceService {
     return monthlyProfitLoss(records, month: anchor);
   }
 
-  Query<Map<String, dynamic>> _query({
-    required DateTime start,
-    required DateTime end,
-    String? type,
-    String? category,
-    String? moduleType,
-  }) {
-    _validateDateRange(start: start, end: end);
-    Query<Map<String, dynamic>> q = _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('date', isLessThan: Timestamp.fromDate(end));
-    if (type != null) q = q.where('type', isEqualTo: type);
-    if (category != null) q = q.where('category', isEqualTo: category);
-    if (moduleType != null) q = q.where('moduleType', isEqualTo: moduleType);
-    return q.orderBy('date', descending: true);
-  }
-
   Future<FirestorePage<FinanceRecord>> fetchPage({
     required DateTime start,
     required DateTime end,
@@ -115,20 +134,14 @@ class FinanceService {
     String? moduleType,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    var q = _query(
+    final docs = await compatibleDocuments(
       start: start,
       end: end,
       type: type,
       category: category,
       moduleType: moduleType,
-    ).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final page = await q.get();
-    return FirestorePage(
-      page.docs.map(FinanceRecord.fromDocument).toList(),
-      page.docs.lastOrNull,
-      page.docs.length == 20,
     );
+    return compatibilityPage(docs, FinanceRecord.fromDocument, cursor: cursor);
   }
 
   Future<AppUser> _authorize(Transaction tx, String uid) async {
@@ -195,6 +208,7 @@ class FinanceService {
     await runOperationalTransaction(_firestore, (tx) async {
       await _authorize(tx, userId);
       final prior = await tx.get(ref);
+      requireOperationalData([prior]);
       final now = FieldValue.serverTimestamp();
       if (id == null) {
         if (prior.exists) {
@@ -273,6 +287,7 @@ class FinanceService {
     await runOperationalTransaction(_firestore, (tx) async {
       await _authorize(tx, userId);
       final old = await tx.get(ref);
+      requireOperationalData([old]);
       final d = old.data();
       final auditRef = ref.collection('edits').doc(requestId);
       final audit = await tx.get(auditRef);

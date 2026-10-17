@@ -351,7 +351,7 @@ void main() {
         limit: 1,
       );
       expect(page.items, hasLength(1));
-      expect(page.hasMore, true);
+      expect(page.hasMore, false);
       expect(
         (await master.fetchPage(
           moduleType: 'lele',

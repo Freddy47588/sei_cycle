@@ -10,11 +10,13 @@ import '../models/finance_record.dart';
 
 class FinanceDetailScreen extends StatefulWidget {
   const FinanceDetailScreen({
+    this.sourceCollection = 'finance_transactions',
     required this.id,
     required this.profile,
     this.firestore,
     super.key,
   });
+  final String sourceCollection;
   final String id;
   final AppUser profile;
   final FirebaseFirestore? firestore;
@@ -32,7 +34,13 @@ class _FinanceDetailScreenState extends State<FinanceDetailScreen> {
   }
 
   void _load() {
-    _future = _db.collection('finance_transactions').doc(widget.id).get();
+    if (!{
+      'finance_transactions',
+      'finance_records',
+    }.contains(widget.sourceCollection)) {
+      throw ArgumentError('Sumber keuangan tidak valid.');
+    }
+    _future = _db.collection(widget.sourceCollection).doc(widget.id).get();
   }
 
   @override
@@ -92,8 +100,15 @@ class _FinanceDetailScreenState extends State<FinanceDetailScreen> {
                 child: FirestorePagedList<Map<String, dynamic>>(
                   queryKey: widget.id,
                   load: (cursor) async {
+                    if (widget.sourceCollection == 'finance_records') {
+                      return const FirestorePage<Map<String, dynamic>>(
+                        [],
+                        null,
+                        false,
+                      );
+                    }
                     var q = _db
-                        .collection('finance_transactions')
+                        .collection(widget.sourceCollection)
                         .doc(widget.id)
                         .collection('edits')
                         .orderBy('editedAt', descending: true)

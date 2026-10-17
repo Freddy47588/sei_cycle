@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../../../core/models/firestore_page.dart';
@@ -15,21 +16,20 @@ class SalesService {
   Future<FirestorePage<InventoryItem>> products({
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    var q = db
-        .collection('inventory')
-        .where('isDeleted', isEqualTo: false)
-        .where('isSellable', isEqualTo: true)
-        .where('productType', isEqualTo: 'harvest')
-        .orderBy('name')
-        .limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final r = await q.get();
-    requireOperationalData(r.docs);
-    return FirestorePage(
-      r.docs.map(InventoryItem.fromDocument).toList(),
-      r.docs.lastOrNull,
-      r.docs.length == 20,
-    );
+    final docs =
+        (await operationalCollection(db, 'inventory'))
+            .where(
+              (d) =>
+                  d.data()['isSellable'] == true &&
+                  d.data()['productType'] == 'harvest',
+            )
+            .toList()
+          ..sort(
+            (a, b) => InventoryItem.fromDocument(
+              a,
+            ).name.compareTo(InventoryItem.fromDocument(b).name),
+          );
+    return compatibilityPage(docs, InventoryItem.fromDocument, cursor: cursor);
   }
 
   Future<String> create({
@@ -185,21 +185,35 @@ class SalesService {
     String? moduleType,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    var q = queryPeriod(start, end, moduleType: moduleType).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final r = await q.get();
-    return FirestorePage(
-      r.docs.map(Sale.fromDocument).toList(),
-      r.docs.lastOrNull,
-      r.docs.length == 20,
-    );
+    final docs = await _saleDocuments(start, end, moduleType: moduleType);
+    return compatibilityPage(docs, Sale.fromDocument, cursor: cursor);
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _saleDocuments(
+    DateTime start,
+    DateTime end, {
+    String? moduleType,
+  }) async {
+    final docs =
+        (await operationalCollection(db, 'sales')).where((d) {
+          final date = d.data()['saleDate'];
+          if (date is! Timestamp) {
+            throw const FormatException('Tanggal penjualan tidak valid.');
+          }
+          return !date.toDate().isBefore(start) &&
+              date.toDate().isBefore(end) &&
+              (moduleType == null || d.data()['moduleType'] == moduleType);
+        }).toList()..sort((a, b) {
+          final order = (b.data()['saleDate'] as Timestamp).compareTo(
+            a.data()['saleDate'] as Timestamp,
+          );
+          return order == 0 ? a.id.compareTo(b.id) : order;
+        });
+    await OperationalIntegrity(db).check(docs);
+    return docs;
   }
 
   Future<List<Sale>> summary(DateTime start, DateTime end) async {
-    final r = await queryPeriod(start, end).limit(501).get();
-    if (r.docs.length > 500) {
-      throw StateError('Lebih dari 500 penjualan. Persempit periode.');
-    }
-    return r.docs.map(Sale.fromDocument).toList();
+    return (await _saleDocuments(start, end)).map(Sale.fromDocument).toList();
   }
 }

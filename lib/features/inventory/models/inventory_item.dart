@@ -4,6 +4,8 @@ import '../../../core/utils/firestore_fields.dart';
 
 class InventoryItem {
   InventoryItem({
+    this.legacyReadOnly = false,
+    this.requiresProvenanceReview = false,
     this.productType = 'operational',
     this.isSellable = false,
     required this.id,
@@ -23,6 +25,8 @@ class InventoryItem {
     required this.isDeleted,
   }) : itemKey = itemKey ?? _fallbackItemKey(name);
 
+  final bool legacyReadOnly;
+  final bool requiresProvenanceReview;
   final String productType;
   final bool isSellable;
   final String id;
@@ -45,12 +49,16 @@ class InventoryItem {
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data() ?? const <String, dynamic>{};
-    final currentStock = doubleField(data, const [
+    final currentStock = requiredNumberField(data, const [
       'currentStock',
       'current_stock',
     ]);
-    final minStock = doubleField(data, const ['minStock', 'min_stock']);
+    final minStock = requiredNumberField(data, const ['minStock', 'min_stock']);
     return InventoryItem(
+      requiresProvenanceReview:
+          data['createdBy'] != 'sample_seed' &&
+          (data['isSampleData'] == true || data['sampleVersion'] == 'v2'),
+      legacyReadOnly: document.reference.path.split('/').first != 'inventory',
       productType: stringField(data, const [
         'productType',
       ], fallback: 'operational'),

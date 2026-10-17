@@ -1,3 +1,4 @@
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dashboard_numbers.dart';
 import 'dashboard_filter.dart';
@@ -33,6 +34,7 @@ class ProductivityReport {
     this.series = const [],
     this.production = const {},
     this.logCount = 0,
+    this.samplesExcluded = false,
     this.logsTruncated = false,
     this.productionUncertain = false,
     this.lastActivity,
@@ -40,7 +42,7 @@ class ProductivityReport {
   final List<ProductivitySeries> series;
   final Map<String, double> production;
   final int logCount;
-  final bool logsTruncated, productionUncertain;
+  final bool logsTruncated, productionUncertain, samplesExcluded;
   final DateTime? lastActivity;
 }
 
@@ -84,10 +86,12 @@ ProductivityReport calculateProductivity({
   required List<AnalyticsDocument> logs,
   required List<AnalyticsDocument> production,
   required Map<String, Map<String, dynamic>> parents,
+  bool samplesExcluded = false,
   bool logsTruncated = false,
   bool productionTruncated = false,
 }) {
   bool matches(Map<String, dynamic> d, String field) =>
+      !hasSampleMarker(d) &&
       d['moduleType'] == module &&
       d['isDeleted'] != true &&
       d[field] is Timestamp &&
@@ -162,6 +166,11 @@ ProductivityReport calculateProductivity({
   for (final item in production) {
     final d = item.data;
     if (!matches(d, 'harvestDate') || d['isReversed'] == true) continue;
+    final parentData = parents[d['logbookId']];
+    if (parentData != null && hasSampleMarker(parentData)) {
+      uncertain = true;
+      continue;
+    }
     final value = finiteNumber(d['quantity']);
     final product = '${d['productName'] ?? ''}'.trim();
     final unit = '${d['unit'] ?? ''}'.trim();
@@ -231,6 +240,11 @@ ProductivityReport calculateProductivity({
     }
   }
   return ProductivityReport(
+    samplesExcluded:
+        samplesExcluded ||
+        logs.any((d) => hasSampleMarker(d.data)) ||
+        production.any((d) => hasSampleMarker(d.data)) ||
+        parents.values.any(hasSampleMarker),
     series: series,
     production: uncertain ? const {} : totals,
     logCount: selected.length,

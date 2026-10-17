@@ -1,3 +1,5 @@
+import '../../../core/utils/audit_mode.dart';
+import '../../../core/utils/legacy_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
 
@@ -18,23 +20,25 @@ class ProductionResultService {
       _firestore.collection(FirestoreCollections.productionResults);
 
   Future<List<ProductionResult>> getRecentResults({int limit = 5}) async {
-    final snapshot = await _collection
-        .orderBy('harvestDate', descending: true)
-        .limit(limit)
-        .get();
-    return snapshot.docs.map(ProductionResult.fromDocument).toList();
+    final docs = await operationalCollection(_firestore, 'production_results');
+    docs.sort(
+      (a, b) => ProductionResult.fromDocument(
+        b,
+      ).harvestDate.compareTo(ProductionResult.fromDocument(a).harvestDate),
+    );
+    return docs.take(limit).map(ProductionResult.fromDocument).toList();
   }
 
   Future<List<ProductionResult>> getResultsByModule(String moduleType) async {
     requireTrimmed(moduleType, 'moduleType');
-    final snapshot = await _collection
-        .where('moduleType', isEqualTo: moduleType.trim())
-        .orderBy('harvestDate', descending: true)
-        .get();
-    return snapshot.docs.map(ProductionResult.fromDocument).toList();
+    return (await operationalCollection(_firestore, 'production_results'))
+        .map(ProductionResult.fromDocument)
+        .where((r) => r.moduleType == moduleType)
+        .toList();
   }
 
   Future<void> createResult(ProductionResult result) {
+    requireWritesEnabled();
     requireTrimmed(result.id, 'id');
     requireTrimmed(result.moduleType, 'moduleType');
     requireTrimmed(result.productName, 'productName');
@@ -61,6 +65,7 @@ class ProductionResultService {
     required String logbookId,
     required String userId,
   }) async {
+    requireWritesEnabled();
     requireTrimmed(logbookId, 'logbookId');
     requireTrimmed(userId, 'userId');
     if (!action.shouldCreateProductionResult || action.quantity <= 0) return;

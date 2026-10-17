@@ -1,3 +1,4 @@
+import '../../../core/utils/audit_mode.dart';
 import 'package:flutter/material.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/delete_confirmation.dart';
@@ -212,7 +213,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget build(BuildContext context) => FeaturePage(
     title: 'Kalender Operasional',
     subtitle: widget.batchId == null
-        ? 'Checklist pakan, perawatan, pemupukan, dan panen Kebun Sei.'
+        ? 'Checklist pakan, perawatan, pemupukan, dan panen Kebun Sei. Data bertanda sampel tidak disertakan.'
         : 'Jadwal Batch ${widget.batchId}',
     actions: [
       if (widget.profile.canManageSchedules)
@@ -319,7 +320,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               ),
               cursor: cursor,
             ),
-            onLoaded: widget.profile.canManageSchedules
+            onLoaded: !readOnlyAudit && widget.profile.canManageSchedules
                 ? (items) async {
                     final service =
                         widget.notifications ?? NotificationService();

@@ -73,7 +73,7 @@ class AppUser {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return AppUser(
-      uid: stringField(data, const ['uid', 'id'], fallback: document.id),
+      uid: document.id,
       name: stringField(data, const ['name'], fallback: 'Pengguna SeiCycle'),
       email: stringField(data, const ['email']),
       photoUrl: stringField(data, const ['photoUrl', 'photo_url']),

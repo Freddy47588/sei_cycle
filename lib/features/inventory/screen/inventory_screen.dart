@@ -1,3 +1,4 @@
+import '../../../core/utils/audit_mode.dart';
 import 'package:flutter/material.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/delete_confirmation.dart';
@@ -129,7 +130,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) => FeaturePage(
     title: 'Inventaris',
-    subtitle: 'Persediaan lokasi, mutasi stok, dan histori Kebun Sei.',
+    subtitle:
+        'Persediaan lokasi, mutasi stok, dan histori Kebun Sei. Data bertanda sampel tidak disertakan.',
     actions: [
       OutlinedButton.icon(
         onPressed: _history,
@@ -246,7 +248,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ),
             transform: _visible,
             watchPage: _service.watchLoaded,
-            onLoaded: widget.profile.canManageInventory
+            onLoaded: !readOnlyAudit && widget.profile.canManageInventory
                 ? (items) => (widget.notifications ?? NotificationService())
                       .createLowStockAlerts(
                         userId: widget.profile.uid,
@@ -262,6 +264,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     item.name,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  if (item.legacyReadOnly)
+                    const Text('Arsip legacy - hanya baca'),
+                  if (item.requiresProvenanceReview)
+                    const Text('Provenance perlu review pengelola'),
                   const SizedBox(height: 6),
                   StatusBadge(
                     label: item.currentStock <= 0
@@ -299,7 +305,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         icon: const Icon(Icons.history),
                         label: const Text('Histori'),
                       ),
-                      if (widget.profile.canManageInventory) ...[
+                      if (widget.profile.canManageInventory &&
+                          !item.legacyReadOnly &&
+                          !item.requiresProvenanceReview) ...[
                         TextButton(
                           onPressed: () => _form(item),
                           child: const Text('Edit Master'),

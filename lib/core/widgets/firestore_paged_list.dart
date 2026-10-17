@@ -92,12 +92,18 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
       final watch = widget.watchPage;
       final idOf = widget.idOf;
       if (watch != null && idOf != null && page.items.isNotEmpty) {
+        final watchedIds = page.items.map(idOf).toSet();
         _subscriptions.add(
           watch(page.items).listen(
             (rows) {
               if (!mounted || generation != _generation) return;
               final updates = {for (final row in rows) idOf(row): row};
               setState(() {
+                _items.removeWhere(
+                  (row) =>
+                      watchedIds.contains(idOf(row)) &&
+                      !updates.containsKey(idOf(row)),
+                );
                 for (var i = 0; i < _items.length; i++) {
                   final updated = updates[idOf(_items[i])];
                   if (updated != null) {
@@ -155,13 +161,14 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
             const Text(
               'Pembaruan stok terhenti. Muat ulang untuk mencoba lagi.',
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              '${visible.length} ditampilkan dari ${_items.length} data dimuat. Bukan jumlah global.',
+          if (_items.isNotEmpty || (!_busy && _error == null))
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                '${visible.length} ditampilkan dari ${_items.length} data dimuat. Bukan jumlah global.',
+              ),
             ),
-          ),
-          if (visible.isEmpty)
+          if (visible.isEmpty && !_busy && _error == null)
             const Padding(
               padding: EdgeInsets.all(24),
               child: Text(
@@ -173,8 +180,11 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
               padding: const EdgeInsets.only(bottom: 10),
               child: widget.itemBuilder(item),
             ),
-          if (_error != null) Text(operationError(_error!)),
-          if (_more || _error != null)
+          if (_error != null && _items.isEmpty)
+            ErrorState(message: operationError(_error!), onRetry: _fetch),
+          if (_error != null && _items.isNotEmpty)
+            Text(operationError(_error!)),
+          if ((_more || _error != null) && !(_error != null && _items.isEmpty))
             OutlinedButton(
               onPressed: _busy ? null : _fetch,
               child: Text(
@@ -185,7 +195,7 @@ class _FirestorePagedListState<T> extends State<FirestorePagedList<T>> {
                     : 'Muat berikutnya',
               ),
             ),
-          if (!_more) const Center(child: Text('Akhir data')),
+          if (!_more && _error == null) const Center(child: Text('Akhir data')),
         ],
       ),
     );

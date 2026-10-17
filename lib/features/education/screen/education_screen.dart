@@ -298,7 +298,7 @@ class _EducationCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    content.title,
+                    content.displayTitle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(

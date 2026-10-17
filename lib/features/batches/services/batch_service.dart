@@ -1,3 +1,6 @@
+import '../../../core/utils/audit_mode.dart';
+import '../../../core/utils/legacy_firestore.dart';
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/firestore_collections.dart';
 import '../../profile/models/app_user.dart';
@@ -10,6 +13,7 @@ class BatchService {
   CollectionReference<Map<String, dynamic>> get _batches =>
       _db.collection(FirestoreCollections.batches);
   Future<void> _authorize(Transaction tx, String userId) async {
+    requireWritesEnabled();
     final profile = await tx.get(_db.collection('users').doc(userId));
     if (!profile.exists || !AppUser.fromDocument(profile).canManageBatches) {
       throw StateError('Tidak memiliki izin mengelola batch.');
@@ -50,6 +54,7 @@ class BatchService {
     await _db.runTransaction((tx) async {
       await _authorize(tx, userId);
       final doc = await tx.get(_batches.doc(id));
+      requireOperationalData([doc]);
       if (!doc.exists) throw StateError('Batch tidak ditemukan.');
       final old = CultivationBatch.fromDocument(doc);
       if (old.isDeleted || !['planned', 'active'].contains(old.status)) {
@@ -91,6 +96,7 @@ class BatchService {
     await _db.runTransaction((tx) async {
       await _authorize(tx, userId);
       final doc = await tx.get(_batches.doc(id));
+      requireOperationalData([doc]);
       if (!doc.exists || doc.data()?['isDeleted'] == true) {
         throw StateError('Batch tidak tersedia.');
       }
@@ -110,7 +116,7 @@ class BatchService {
 
   Future<CultivationBatch?> getBatch(String id) async {
     final doc = await _batches.doc(id).get();
-    return doc.exists && doc.data()?['isDeleted'] != true
+    return doc.exists && isOperationalRecord(doc.data() ?? {})
         ? CultivationBatch.fromDocument(doc)
         : null;
   }
@@ -121,19 +127,34 @@ class BatchService {
     bool newestFirst = true,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    Query<Map<String, dynamic>> q = _batches.where(
-      'isDeleted',
-      isEqualTo: false,
+    final docs =
+        (await operationalCollection(_db, 'batches'))
+            .where(
+              (d) =>
+                  (moduleType == null ||
+                      d.data()['moduleType'] == moduleType) &&
+                  (status == null || d.data()['status'] == status),
+            )
+            .toList()
+          ..sort((a, b) {
+            final order =
+                (CultivationBatch.fromDocument(a).createdAt ?? DateTime(1970))
+                    .compareTo(
+                      CultivationBatch.fromDocument(b).createdAt ??
+                          DateTime(1970),
+                    );
+            final stable = order == 0 ? a.id.compareTo(b.id) : order;
+            return newestFirst ? -stable : stable;
+          });
+    final page = compatibilityPage(
+      docs,
+      CultivationBatch.fromDocument,
+      cursor: cursor,
     );
-    if (moduleType != null) q = q.where('moduleType', isEqualTo: moduleType);
-    if (status != null) q = q.where('status', isEqualTo: status);
-    q = q.orderBy('createdAt', descending: newestFirst).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final result = await q.get();
     return BatchPage(
-      entries: result.docs.map(CultivationBatch.fromDocument).toList(),
-      cursor: result.docs.lastOrNull,
-      hasMore: result.docs.length == 20,
+      entries: page.items,
+      cursor: page.cursor,
+      hasMore: page.hasMore,
     );
   }
 }

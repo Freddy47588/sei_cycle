@@ -1,3 +1,4 @@
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/utils/operational_auth.dart';
 import '../../../core/utils/firestore_validators.dart';
@@ -73,6 +74,7 @@ class InventoryAdjustmentService {
       }
       final itemRef = _db.collection('inventory').doc(itemId);
       final item = await tx.get(itemRef);
+      requireOperationalData([item]);
       final d = item.data();
       if (!item.exists ||
           d?['isDeleted'] != false ||

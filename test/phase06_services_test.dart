@@ -839,22 +839,24 @@ void main() {
     },
   );
   test(
-    'dashboard and productivity reject sample-marked data instead of publishing demo stats',
+    'dashboard and productivity exclude samples without publishing demo stats',
     () async {
       final db = MemoryFirestore();
-      db.documents['logbooks/demo'] = {'isSampleData': true};
-      await expectLater(
-        DashboardService(
-          firestore: db,
-        ).getDashboardSummary(includeFinance: false),
-        throwsStateError,
-      );
-      await expectLater(
-        ProductivityService(
-          firestore: db,
-        ).load(DashboardFilter.days(7), 'lele', null),
-        throwsStateError,
-      );
+      db.documents['logbooks/demo'] = {
+        'isSampleData': true,
+        'createdBy': 'sample_seed',
+      };
+      final summary = await DashboardService(
+        firestore: db,
+      ).getDashboardSummary(includeFinance: false);
+      expect(summary.todayLogCount, 0);
+      expect(summary.samplesExcluded, isTrue);
+      expect(summary.recentActivities, isEmpty);
+      final report = await ProductivityService(
+        firestore: db,
+      ).load(DashboardFilter.days(7), 'lele', null);
+      expect(report.logCount, 0);
+      expect(report.production, isEmpty);
       expect(hasSampleMarker({'createdBy': 'sample_seed'}), true);
     },
   );

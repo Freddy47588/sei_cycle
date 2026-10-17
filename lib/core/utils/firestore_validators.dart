@@ -1,4 +1,9 @@
 void requireTrimmed(String value, String fieldName) {
+  if ({'userId', 'createdBy'}.contains(fieldName) && value == 'sample_seed') {
+    throw ArgumentError(
+      'Identitas simulasi tidak dapat membuat input operasional.',
+    );
+  }
   if (value.trim().isEmpty) {
     throw ArgumentError.value(value, fieldName, '$fieldName wajib diisi.');
   }

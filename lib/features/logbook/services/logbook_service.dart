@@ -1,3 +1,6 @@
+import '../../../core/utils/audit_mode.dart';
+import '../../../core/utils/legacy_firestore.dart';
+import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter/foundation.dart';
@@ -40,49 +43,25 @@ class LogbookService {
       _firestore.collection(FirestoreCollections.logbooks);
 
   Stream<List<LogbookEntry>> watchEntries({String? moduleId, DateTime? date}) {
-    Query<Map<String, dynamic>> query = _collection.where(
-      'isDeleted',
-      isEqualTo: false,
+    return watchOperationalCollections(_firestore, ['logbooks']).map(
+      (docs) =>
+          docs
+              .map(LogbookEntry.fromDocument)
+              .where(
+                (e) =>
+                    (moduleId == null || e.moduleId == moduleId) &&
+                    (date == null ||
+                        (e.activityDate.year == date.year &&
+                            e.activityDate.month == date.month &&
+                            e.activityDate.day == date.day)),
+              )
+              .toList()
+            ..sort((a, b) => b.activityDate.compareTo(a.activityDate)),
     );
-
-    if (moduleId != null) {
-      query = query.where('moduleType', isEqualTo: moduleId);
-    }
-
-    if (date != null) {
-      final start = DateTime(date.year, date.month, date.day);
-      final end = start.add(const Duration(days: 1));
-      query = query
-          .where(
-            'activityDate',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(start),
-          )
-          .where('activityDate', isLessThan: Timestamp.fromDate(end));
-    }
-
-    return query
-        .orderBy('activityDate', descending: true)
-        .limit(50)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs.map(LogbookEntry.fromDocument).toList(),
-        );
   }
 
-  Future<List<LogbookEntry>> getHistoryByModule(String moduleType) async {
-    requireOneOf(
-      moduleType,
-      FarmModules.values.map((module) => module.id).toSet(),
-      'moduleType',
-    );
-    final snapshot = await _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('moduleType', isEqualTo: moduleType)
-        .orderBy('activityDate', descending: true)
-        .limit(20)
-        .get();
-    return snapshot.docs.map(LogbookEntry.fromDocument).toList();
-  }
+  Future<List<LogbookEntry>> getHistoryByModule(String moduleType) async =>
+      (await getPage(filter: LogbookFilter(moduleId: moduleType))).entries;
 
   Future<String> createDailyEntry({
     String? requestId,
@@ -191,6 +170,7 @@ class LogbookService {
     try {
       await runOperationalTransaction(_firestore, (transaction) async {
         final existing = await transaction.get(_collection.doc(logbookId));
+        requireOperationalData([existing]);
         if (existing.exists) {
           final data = existing.data()!;
           if (!matchesRequest(data)) {
@@ -211,6 +191,7 @@ class LogbookService {
           final batch = await transaction.get(
             _firestore.collection(FirestoreCollections.batches).doc(batchId),
           );
+          requireOperationalData([batch]);
           final data = batch.data();
           if (!batch.exists ||
               data?['isDeleted'] != false ||
@@ -427,43 +408,39 @@ class LogbookService {
     required LogbookFilter filter,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    Query<Map<String, dynamic>> query = _collection.where(
-      'isDeleted',
-      isEqualTo: false,
+    final docs =
+        (await operationalCollection(_firestore, 'logbooks')).where((d) {
+          final e = LogbookEntry.fromDocument(d);
+          return (filter.moduleId == null || e.moduleId == filter.moduleId) &&
+              (filter.batchId == null || e.batchId == filter.batchId) &&
+              (filter.start == null ||
+                  !e.activityDate.isBefore(filter.start!)) &&
+              (filter.endExclusive == null ||
+                  e.activityDate.isBefore(filter.endExclusive!));
+        }).toList()..sort((a, b) {
+          final order = LogbookEntry.fromDocument(
+            a,
+          ).activityDate.compareTo(LogbookEntry.fromDocument(b).activityDate);
+          final stable = order == 0 ? a.id.compareTo(b.id) : order;
+          return filter.newestFirst ? -stable : stable;
+        });
+    final page = compatibilityPage(
+      docs,
+      LogbookEntry.fromDocument,
+      cursor: cursor,
     );
-    if (filter.batchId != null) {
-      query = query.where('batchId', isEqualTo: filter.batchId);
-    }
-    if (filter.moduleId != null) {
-      query = query.where('moduleType', isEqualTo: filter.moduleId);
-    }
-    if (filter.start != null) {
-      query = query.where(
-        'activityDate',
-        isGreaterThanOrEqualTo: Timestamp.fromDate(filter.start!),
-      );
-    }
-    if (filter.endExclusive != null) {
-      query = query.where(
-        'activityDate',
-        isLessThan: Timestamp.fromDate(filter.endExclusive!),
-      );
-    }
-    query = query
-        .orderBy('activityDate', descending: filter.newestFirst)
-        .limit(20);
-    if (cursor != null) query = query.startAfterDocument(cursor);
-    final result = await query.get();
     return LogbookPage(
-      entries: result.docs.map(LogbookEntry.fromDocument).toList(),
-      cursor: result.docs.lastOrNull,
-      hasMore: result.docs.length == 20,
+      entries: page.items,
+      cursor: page.cursor,
+      hasMore: page.hasMore,
     );
   }
 
   Future<LogbookEntry?> getEntry(String id) async {
     final doc = await _collection.doc(id).get();
-    return doc.exists ? LogbookEntry.fromDocument(doc) : null;
+    return doc.exists && isOperationalRecord(doc.data() ?? {})
+        ? LogbookEntry.fromDocument(doc)
+        : null;
   }
 
   Future<LogbookLinks> getLinks(String id) async {
@@ -492,9 +469,11 @@ class LogbookService {
     required DateTime expectedUpdatedAt,
   }) async {
     requireTrimmed(userId, 'userId');
+    requireWritesEnabled();
     final auditRef = _collection.doc(id).collection('note_edits').doc();
     await _firestore.runTransaction((tx) async {
       final doc = await tx.get(_collection.doc(id));
+      requireOperationalData([doc]);
       if (!doc.exists || doc.data()?['isDeleted'] == true) {
         throw StateError('Catatan tidak tersedia.');
       }

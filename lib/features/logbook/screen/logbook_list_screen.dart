@@ -130,7 +130,7 @@ class _LogbookListScreenState extends State<LogbookListScreen> {
           padding: const EdgeInsets.all(20),
           children: [
             const Text(
-              'Kelola dan pantau catatan aktivitas operasional Kebun Sei.',
+              'Kelola dan pantau catatan aktivitas operasional Kebun Sei. Data bertanda sampel tidak disertakan.',
             ),
             const SizedBox(height: 16),
             TextField(

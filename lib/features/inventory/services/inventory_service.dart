@@ -1,3 +1,5 @@
+import '../../../core/utils/legacy_firestore.dart';
+import '../../../core/utils/sample_data_guard.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -18,31 +20,28 @@ class InventoryService {
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(FirestoreCollections.inventory);
 
-  Stream<List<InventoryItem>> watchItems() {
-    return _collection
-        .where('isDeleted', isEqualTo: false)
-        .orderBy('isLowStock', descending: true)
-        .orderBy('name')
-        .limit(100)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs.map(InventoryItem.fromDocument).toList(),
-        );
-  }
+  Stream<List<InventoryItem>> watchItems() =>
+      watchOperationalCollections(_firestore, [
+        'inventory',
+        'inventory_items',
+      ]).map(
+        (docs) =>
+            docs.map(InventoryItem.fromDocument).toList()
+              ..sort((a, b) => a.name.compareTo(b.name)),
+      );
 
   /// One bounded listener per loaded page; never an unbounded collection scan.
   Stream<List<InventoryItem>> watchLoaded(List<InventoryItem> items) =>
-      _collection
-          .where(
-            FieldPath.documentId,
-            whereIn: items.map((item) => item.id).toList(),
-          )
-          .limit(items.length)
-          .snapshots()
-          .map(
-            (snapshot) =>
-                snapshot.docs.map(InventoryItem.fromDocument).toList(),
-          );
+      watchItems().map(
+        (all) => all
+            .where(
+              (i) => items.any(
+                (old) =>
+                    old.id == i.id && old.legacyReadOnly == i.legacyReadOnly,
+              ),
+            )
+            .toList(),
+      );
 
   Future<FirestorePage<InventoryItem>> fetchPage({
     String? moduleType,
@@ -50,19 +49,36 @@ class InventoryService {
     DocumentSnapshot<Map<String, dynamic>>? cursor,
     int limit = 20,
   }) async {
-    Query<Map<String, dynamic>> q = _collection.where(
-      'isDeleted',
-      isEqualTo: false,
-    );
-    if (moduleType != null) q = q.where('moduleType', isEqualTo: moduleType);
-    if (category != null) q = q.where('category', isEqualTo: category);
-    q = q.orderBy('name').limit(limit.clamp(1, 50));
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final result = await q.get();
-    return FirestorePage(
-      result.docs.map(InventoryItem.fromDocument).toList(),
-      result.docs.lastOrNull,
-      result.docs.length == limit.clamp(1, 50),
+    final sources = await Future.wait([
+      operationalCollection(_firestore, 'inventory'),
+      operationalCollection(_firestore, 'inventory_items'),
+    ]);
+    final docs =
+        [...sources[0], ...sources[1]].where((d) {
+          final item = InventoryItem.fromDocument(d);
+          return (moduleType == null || item.moduleType == moduleType) &&
+              (category == null || item.category == category);
+        }).toList()..sort((a, b) {
+          final order = InventoryItem.fromDocument(
+            a,
+          ).name.compareTo(InventoryItem.fromDocument(b).name);
+          return order == 0
+              ? a.reference.path.compareTo(b.reference.path)
+              : order;
+        });
+    final ids = <String>{};
+    for (final d in docs) {
+      if (!ids.add(d.id)) {
+        throw StateError(
+          'Identitas inventory legacy ambigu; perlu rekonsiliasi.',
+        );
+      }
+    }
+    return compatibilityPage(
+      docs,
+      InventoryItem.fromDocument,
+      cursor: cursor,
+      limit: limit,
     );
   }
 
@@ -181,8 +197,14 @@ class InventoryService {
           !actor.isAdmin) {
         throw StateError('Klasifikasi produk jual hanya oleh admin.');
       }
+      if (item.legacyReadOnly) {
+        throw StateError(
+          'Master legacy hanya dapat dibaca sampai rekonsiliasi selesai.',
+        );
+      }
       final ref = _collection.doc(item.id);
       final current = await tx.get(ref);
+      requireOperationalData([current]);
       if (!current.exists ||
           current.data()?['isDeleted'] != false ||
           InventoryItem.fromDocument(current).updatedAt != item.updatedAt) {
@@ -258,6 +280,8 @@ class InventoryService {
     String? batchId,
     required String userId,
   }) {
+    requireOperationalData([snapshot]);
+    if (hasSampleMarker(target.existingData ?? {})) throw SampleDataException();
     final action = target.action;
     if (!snapshot.exists && target.existingData != null) {
       throw StateError('Item stok telah dihapus. Muat ulang inventaris.');
@@ -353,6 +377,7 @@ class InventoryService {
       if (!actor.isAdmin) throw StateError('Hanya admin yang dapat menghapus.');
       final ref = _collection.doc(id);
       final item = await tx.get(ref);
+      requireOperationalData([item]);
       if (!item.exists || item.data()?['currentStock'] != 0) {
         throw StateError(
           'Kosongkan stok melalui mutasi sebelum menghapus master.',
@@ -369,12 +394,22 @@ class InventoryService {
   Future<QueryDocumentSnapshot<Map<String, dynamic>>?> _findByItemKey(
     String itemKey,
   ) async {
-    final snapshot = await _collection
-        .where('itemKey', isEqualTo: itemKey.trim())
-        .where('isDeleted', isEqualTo: false)
-        .limit(1)
-        .get();
-    if (snapshot.docs.isNotEmpty) return snapshot.docs.first;
+    final matches = (await completeCollection(_firestore, 'inventory'))
+        .where(
+          (d) =>
+              legacyFields(d.data())['itemKey'] == itemKey.trim() &&
+              legacyFields(d.data())['isDeleted'] != true,
+        )
+        .toList();
+    final real = matches.where((d) => isOperationalRecord(d.data())).toList();
+    if (real.length > 1) {
+      throw StateError('Master barang operasional ganda; perlu rekonsiliasi.');
+    }
+    if (real.isNotEmpty) {
+      requireOperationalData(real);
+      return real.single;
+    }
+    if (matches.isNotEmpty) throw SampleDataException();
     return null;
   }
 }

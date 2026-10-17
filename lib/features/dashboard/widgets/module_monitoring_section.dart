@@ -1,3 +1,5 @@
+import '../../../core/utils/operation_error.dart';
+import '../../../core/utils/debug_diagnostics.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/farm_modules.dart';
@@ -101,7 +103,8 @@ class _ModuleMonitoringSectionState extends State<ModuleMonitoringSection> {
         _report = value;
         _loading = false;
       });
-    } catch (error) {
+    } catch (error, stack) {
+      logLoadFailure('ProductivityService', 'load', error, stack);
       if (!mounted || generation != _generation) return;
       setState(() {
         _error = error;
@@ -238,12 +241,12 @@ class _ModuleMonitoringSectionState extends State<ModuleMonitoringSection> {
             if (_loading)
               const LoadingState(label: 'Memuat pengamatan dan produksi...')
             else if (_error != null)
-              ErrorState(
-                message:
-                    'Produktivitas gagal dimuat. Periksa koneksi, izin, dan indeks Firestore.',
-                onRetry: _reload,
-              )
+              ErrorState(message: dashboardLoadError(_error), onRetry: _reload)
             else if (report != null) ...[
+              if (report.samplesExcluded)
+                const Text(
+                  'Data bertanda sampel tidak disertakan dalam produktivitas.',
+                ),
               Text(
                 '${report.logCount} catatan ${report.logsTruncated ? 'terbaru (batas 500; bukan total periode)' : 'pada periode ini'}',
               ),

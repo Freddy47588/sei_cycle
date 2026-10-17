@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import '../../../core/utils/sample_data_guard.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/firestore_collections.dart';
@@ -14,35 +15,36 @@ class ProductivityService {
     String module,
     String? batchId,
   ) async {
-    await requireNoSampleData(_db, ['logbooks', 'production_results']);
-    Query<Map<String, dynamic>> query(String collection, String field) {
-      Query<Map<String, dynamic>> q = _db
-          .collection(collection)
-          .where('moduleType', isEqualTo: module)
-          .where(
-            field,
-            isGreaterThanOrEqualTo: Timestamp.fromDate(filter.start),
-          )
-          .where(field, isLessThan: Timestamp.fromDate(filter.end));
-      if (batchId != null) q = q.where('batchId', isEqualTo: batchId);
-      if (collection == FirestoreCollections.logbooks) {
-        q = q.where('isDeleted', isEqualTo: false);
-      }
-      return q.orderBy(field, descending: true).limit(501);
-    }
-
     final snapshots = await Future.wait([
-      query(FirestoreCollections.logbooks, 'activityDate').get(),
-      query(FirestoreCollections.productionResults, 'harvestDate').get(),
+      completeCollection(_db, FirestoreCollections.logbooks),
+      completeCollection(_db, FirestoreCollections.productionResults),
     ]);
-    final logs = snapshots[0].docs
-        .take(500)
-        .map((d) => AnalyticsDocument(d.id, d.data()))
+    List<AnalyticsDocument> select(int index, String date) => snapshots[index]
+        .where((d) => isOperationalRecord(d.data()))
+        .map((d) => AnalyticsDocument(d.id, legacyFields(d.data())))
+        .where(
+          (d) =>
+              d.data['moduleType'] == module &&
+              (batchId == null || d.data['batchId'] == batchId),
+        )
+        .where((d) {
+          if (d.data[date] is! Timestamp) {
+            throw const FormatException('Tanggal produktivitas tidak valid.');
+          }
+          return filter.contains((d.data[date] as Timestamp).toDate());
+        })
         .toList();
-    final production = snapshots[1].docs
-        .take(500)
-        .map((d) => AnalyticsDocument(d.id, d.data()))
-        .toList();
+    final logs = select(0, 'activityDate');
+    final production = select(1, 'harvestDate');
+    final selectedIds = {
+      ...logs.map((d) => 'logbooks/${d.id}'),
+      ...production.map((d) => 'production_results/${d.id}'),
+    };
+    await OperationalIntegrity(_db).check(
+      snapshots
+          .expand((s) => s)
+          .where((d) => selectedIds.contains(d.reference.path)),
+    );
     final parentIds = production
         .map((d) => d.data['logbookId'])
         .whereType<String>()
@@ -59,20 +61,23 @@ class ProductivityService {
             whereIn: parentIds.skip(offset).take(30).toList(),
           )
           .limit(30)
-          .get();
+          .get(const GetOptions(source: Source.server));
       for (final doc in docs.docs) {
-        parents[doc.id] = doc.data();
+        parents[doc.id] = legacyFields(doc.data());
       }
     }
     return calculateProductivity(
+      samplesExcluded: snapshots.any(
+        (s) => s.any((d) => isSeedOrigin(d.data())),
+      ),
       filter: filter,
       module: module,
       batchId: batchId,
       logs: logs,
       production: production,
       parents: parents,
-      logsTruncated: snapshots[0].docs.length > 500,
-      productionTruncated: snapshots[1].docs.length > 500,
+      logsTruncated: false,
+      productionTruncated: false,
     );
   }
 }

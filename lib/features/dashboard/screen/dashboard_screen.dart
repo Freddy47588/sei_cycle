@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../../core/constants/farm_modules.dart';
 import '../../batches/screen/batch_detail_screen.dart';
@@ -275,8 +274,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   SectionHeader(
                     title: 'Ringkasan Operasional',
                     subtitle: 'KPI hari ini & kondisi saat ini',
-                    trailing: const _HeaderLiveBadge(
-                      label: 'Dimuat',
+                    trailing: _HeaderLiveBadge(
+                      label: summary.sectionErrors.isEmpty
+                          ? 'Dimuat'
+                          : 'Sebagian',
                       color: AppColors.primaryGreen,
                     ),
                   ),
@@ -285,6 +286,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       'Terakhir diperbarui: ${DateFormat('d MMM yyyy HH:mm:ss', 'id_ID').format(summary.updatedAt!)}',
                     ),
                   const SizedBox(height: 12),
+                  if (summary.samplesExcluded)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Data bertanda sampel tidak disertakan. Data nyata tetap ditampilkan; pengelola dapat meninjau sampel tanpa menghapus data asli.',
+                      ),
+                    ),
+                  for (final entry in summary.sectionErrors.entries)
+                    if (!['finance', 'sales'].contains(entry.key))
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${dashboardSectionLabel(entry.key)} ? Belum dapat dihitung',
+                              ),
+                              Text(dashboardError(entry.value)),
+                              TextButton.icon(
+                                onPressed: _reload,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Coba lagi'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                   _StatsGrid(
                     summary: summary,
                     onBatches: widget.profile.canViewBatches
@@ -319,7 +348,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     title: 'Sistem Aliran Nutrisi',
                     subtitle: 'Diagram konsep dan catatan aliran aktual',
                   ),
-                  NutrientFlowCard(flows: summary.circularFlows),
+                  if (!summary.sectionErrors.containsKey('flows'))
+                    NutrientFlowCard(flows: summary.circularFlows),
                   TextButton.icon(
                     onPressed: () => Navigator.push(
                       context,
@@ -384,7 +414,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     subtitle:
                         'Jadwal hari ini, logbook terbaru & checklist selesai - maksimal 10 entri',
                   ),
-                  if (summary.recentActivities.isEmpty)
+                  if (summary.sectionErrors.containsKey('activities'))
+                    const Text(
+                      'Aktivitas belum dapat dimuat. Gunakan Coba lagi di atas.',
+                    )
+                  else if (summary.recentActivities.isEmpty)
                     const EmptyState(
                       title: 'Belum ada aktivitas hari ini',
                       message:
@@ -428,20 +462,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   );
 }
 
-String dashboardError(Object? error) {
-  if (error is StateError && error.message.startsWith('Lebih dari 500')) {
-    return error.message;
-  }
-  if (error is FirebaseException) {
-    if (error.code == 'failed-precondition') {
-      return 'Indeks data belum siap. Hubungi admin untuk menyiapkan indeks Firestore, lalu coba lagi.';
-    }
-    if (error.code == 'permission-denied') {
-      return 'Akses data ditolak. Periksa role dan Security Rules.';
-    }
-  }
-  return 'Data gagal dimuat. Periksa koneksi atau validitas data, lalu coba lagi.';
-}
+String dashboardSectionLabel(String key) => switch (key) {
+  'modules' => 'Modul aktif',
+  'logs' => 'Logbook hari ini',
+  'schedules' => 'Jadwal hari ini',
+  'batches' => 'Batch',
+  'inventory' => 'Stok',
+  'activities' => 'Aktivitas terbaru',
+  'flows' => 'Aliran aktual',
+  _ => 'Ringkasan',
+};
+
+String dashboardError(Object? error) => dashboardLoadError(error);
 
 class _WelcomeHeader extends StatelessWidget {
   @override
@@ -657,21 +689,21 @@ class _StatsGrid extends StatelessWidget {
     final stats = [
       _StatData(
         title: 'Modul Aktif',
-        value: '${summary.activeModuleCount}',
+        value: summary.activeModuleCount?.toString() ?? 'Belum dapat dihitung',
         helper: 'Saat Ini - modul budidaya aktif',
         icon: Icons.hub_outlined,
         color: AppColors.primaryGreen,
       ),
       _StatData(
         title: 'Aktivitas Hari Ini',
-        value: '${summary.todayLogCount}',
+        value: summary.todayLogCount?.toString() ?? 'Belum dapat dihitung',
         helper: 'Hari Ini - catatan logbook',
         icon: Icons.edit_note_outlined,
         color: AppColors.warning,
       ),
       _StatData(
         title: 'Stok Rendah',
-        value: '${summary.lowStockCount}',
+        value: summary.lowStockCount?.toString() ?? 'Belum dapat dihitung',
         helper:
             'Saat Ini - ${summary.inventoryTruncated ? 'cakupan terbatas' : 'seluruh item'}',
         icon: Icons.inventory_2_outlined,
@@ -679,23 +711,24 @@ class _StatsGrid extends StatelessWidget {
       ),
       _StatData(
         title: 'Jadwal Hari Ini',
-        value: '${summary.todayScheduleCount}',
+        value: summary.todayScheduleCount?.toString() ?? 'Belum dapat dihitung',
         helper:
-            'Hari Ini - ${summary.pendingScheduleCount} pending / ${summary.doneScheduleCount} done / ${summary.skippedScheduleCount} skipped',
+            'Hari Ini - ${summary.pendingScheduleCount ?? '?'} pending / ${summary.doneScheduleCount ?? '?'} done / ${summary.skippedScheduleCount ?? '?'} skipped',
         icon: Icons.event_note_outlined,
         color: AppColors.info,
       ),
       _StatData(
         title: 'Batch Aktif',
-        value: '${summary.activeBatchCount}',
-        helper: 'Saat Ini - ${summary.completedBatchCount} batch completed',
+        value: summary.activeBatchCount?.toString() ?? 'Belum dapat dihitung',
+        helper:
+            'Saat Ini - ${summary.completedBatchCount ?? '?'} batch completed',
         icon: Icons.layers_outlined,
         color: AppColors.primaryGreen,
         onTap: onBatches,
       ),
       _StatData(
         title: 'Stok Habis',
-        value: '${summary.outOfStockCount}',
+        value: summary.outOfStockCount?.toString() ?? 'Belum dapat dihitung',
         helper:
             'Saat Ini - saldo <= 0${summary.inventoryTruncated ? ' - cakupan terbatas' : ''}',
         icon: Icons.production_quantity_limits,
@@ -775,10 +808,14 @@ class _StatCard extends StatelessWidget {
             const Spacer(),
             Text(
               data.value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: data.color,
-                fontWeight: FontWeight.bold,
-              ),
+              style:
+                  (data.value == 'Belum dapat dihitung'
+                          ? Theme.of(context).textTheme.titleMedium
+                          : Theme.of(context).textTheme.headlineMedium)
+                      ?.copyWith(
+                        color: data.color,
+                        fontWeight: FontWeight.bold,
+                      ),
             ),
             const SizedBox(height: 3),
             Text(
@@ -1115,11 +1152,13 @@ class _RevenueCard extends StatelessWidget {
                   children: [
                     Text(row.$1),
                     Text(
-                      NumberFormat.currency(
-                        locale: 'id_ID',
-                        symbol: 'Rp ',
-                        decimalDigits: 0,
-                      ).format(row.$2),
+                      row.$2 == null
+                          ? 'Belum dapat dihitung'
+                          : NumberFormat.currency(
+                              locale: 'id_ID',
+                              symbol: 'Rp ',
+                              decimalDigits: 0,
+                            ).format(row.$2),
                       style: TextStyle(
                         color: row.$3,
                         fontWeight: FontWeight.bold,

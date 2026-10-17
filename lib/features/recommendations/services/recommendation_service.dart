@@ -1,7 +1,9 @@
+import '../../../core/constants/firestore_collections.dart';
+import '../../../core/utils/legacy_firestore.dart';
+import '../../finance/services/finance_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../core/constants/farm_modules.dart';
-import '../../../core/constants/firestore_collections.dart';
 import '../../finance/models/finance_record.dart';
 import '../../inventory/models/inventory_item.dart';
 import '../../logbook/models/logbook_entry.dart';
@@ -24,69 +26,40 @@ class RecommendationService {
     final monthStart = DateTime(today.year, today.month);
     final nextMonth = DateTime(today.year, today.month + 1);
 
-    final logbookFuture = _firestore
-        .collection(FirestoreCollections.logbooks)
-        .where('isDeleted', isEqualTo: false)
-        .where(
-          'activityDate',
-          isGreaterThanOrEqualTo: Timestamp.fromDate(logbookStart),
-        )
-        .orderBy('activityDate', descending: true)
-        .limit(80)
-        .get();
-    final lowStockFuture = _firestore
-        .collection(FirestoreCollections.inventory)
-        .where('isDeleted', isEqualTo: false)
-        .where('isLowStock', isEqualTo: true)
-        .orderBy('name')
-        .limit(10)
-        .get();
-    final overdueScheduleFuture = _firestore
-        .collection(FirestoreCollections.schedules)
-        .where('isDeleted', isEqualTo: false)
-        .where('status', isEqualTo: 'pending')
-        .where('date', isLessThan: Timestamp.fromDate(today))
-        .orderBy('date')
-        .limit(10)
-        .get();
-    final financeFuture = includeFinance
-        ? _firestore
-              .collection(FirestoreCollections.financeTransactions)
-              .where('isDeleted', isEqualTo: false)
-              .where(
-                'date',
-                isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart),
-              )
-              .where('date', isLessThan: Timestamp.fromDate(nextMonth))
-              .orderBy('date', descending: true)
-              .limit(80)
-              .get()
-        : Future<QuerySnapshot<Map<String, dynamic>>?>.value(null);
-
-    final results = await Future.wait<Object?>([
-      logbookFuture,
-      lowStockFuture,
-      overdueScheduleFuture,
-      financeFuture,
+    final sources = await Future.wait([
+      operationalCollection(_firestore, 'logbooks'),
+      operationalCollection(_firestore, 'inventory'),
+      operationalCollection(_firestore, 'inventory_items'),
+      operationalCollection(_firestore, 'schedules'),
+      operationalCollection(_firestore, 'inventory_transactions'),
     ]);
-
-    final logbookSnapshot = results[0] as QuerySnapshot<Map<String, dynamic>>;
-    final lowStockSnapshot = results[1] as QuerySnapshot<Map<String, dynamic>>;
-    final overdueScheduleSnapshot =
-        results[2] as QuerySnapshot<Map<String, dynamic>>;
-    final financeSnapshot = results[3] as QuerySnapshot<Map<String, dynamic>>?;
-
+    await OperationalIntegrity(
+      _firestore,
+    ).check([...sources[0], ...sources[4]]);
+    final cash = includeFinance
+        ? (await FinanceService(firestore: _firestore).loadSummaryByDateRange(
+            start: monthStart,
+            end: nextMonth,
+          )).transactions
+        : <FinanceRecord>[];
     return generateFromData(
-      logbooks: logbookSnapshot.docs.map(LogbookEntry.fromDocument).toList(),
-      lowStockItems: lowStockSnapshot.docs
-          .map(InventoryItem.fromDocument)
+      logbooks: sources[0]
+          .map(LogbookEntry.fromDocument)
+          .where(
+            (e) =>
+                !e.activityDate.isBefore(logbookStart) &&
+                !e.activityDate.isAfter(anchor),
+          )
           .toList(),
-      overdueSchedules: overdueScheduleSnapshot.docs
+      lowStockItems: [
+        ...sources[1],
+        ...sources[2],
+      ].map(InventoryItem.fromDocument).where((i) => i.isLowStock).toList(),
+      overdueSchedules: sources[3]
           .map(ScheduleItem.fromDocument)
+          .where((s) => s.status == 'pending' && s.scheduledAt.isBefore(today))
           .toList(),
-      financeRecords:
-          financeSnapshot?.docs.map(FinanceRecord.fromDocument).toList() ??
-          const [],
+      financeRecords: cash,
       includeFinance: includeFinance,
       now: anchor,
     );

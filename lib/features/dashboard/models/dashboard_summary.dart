@@ -77,6 +77,8 @@ class DashboardCircularFlow {
 
 class DashboardSummary {
   const DashboardSummary({
+    this.sectionErrors = const {},
+    this.samplesExcluded = false,
     this.salesTotal,
     this.soldQuantities = const {},
     this.salesError,
@@ -107,24 +109,28 @@ class DashboardSummary {
   final int? salesTotal;
   final Map<String, double> soldQuantities;
   final Object? salesError;
-  final int activeModuleCount;
-  final int todayLogCount;
-  final int todayScheduleCount;
-  final int lowStockCount;
-  final double monthlyIncome;
-  final double monthlyExpense;
-  final double monthlyProfit;
+  final Map<String, Object> sectionErrors;
+  final bool samplesExcluded;
+  final int? activeModuleCount;
+  final int? todayLogCount;
+  final int? todayScheduleCount;
+  final int? lowStockCount;
+  final double? monthlyIncome;
+  final double? monthlyExpense;
+  final double? monthlyProfit;
   final List<DashboardActivity> recentActivities;
   final List<RevenueBreakdownItem> revenueItems;
   final List<DashboardCircularFlow> circularFlows;
   final List<LowStockDashboardItem> lowStockPreview;
   final bool financeVisible;
-  final int activeBatchCount, completedBatchCount;
-  final int pendingScheduleCount, doneScheduleCount, skippedScheduleCount;
-  final int outOfStockCount, inventoryLoaded;
+  final int? activeBatchCount, completedBatchCount;
+  final int? pendingScheduleCount, doneScheduleCount, skippedScheduleCount;
+  final int? outOfStockCount;
+  final int inventoryLoaded;
   final bool inventoryTruncated;
   final Object? financeError;
   final DateTime? updatedAt;
 
-  bool get hasFinanceData => monthlyIncome > 0 || monthlyExpense > 0;
+  bool get hasFinanceData =>
+      (monthlyIncome ?? 0) > 0 || (monthlyExpense ?? 0) > 0;
 }

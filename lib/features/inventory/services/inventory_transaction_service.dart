@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../core/constants/firestore_collections.dart';
@@ -24,24 +25,15 @@ class InventoryTransactionService {
       'logbookId' => ('logbooks', 'activityDate', 'title'),
       _ => throw ArgumentError('Pilih barang, batch atau Logbook.'),
     };
-    var q = _firestore
-        .collection(collection)
-        .where('isDeleted', isEqualTo: false)
-        .orderBy(order, descending: order != 'name')
-        .limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final page = await q.get();
-    return FirestorePage(
-      page.docs
-          .map(
-            (d) => HistoryReference(
-              d.id,
-              '${d.data()[label] ?? d.id}${d.data()["code"] == null ? "" : " (${d.data()["code"]})"}',
-            ),
-          )
-          .toList(),
-      page.docs.lastOrNull,
-      page.docs.length == 20,
+    final docs = await operationalCollection(_firestore, collection);
+    docs.sort(
+      (a, b) =>
+          '${a.data()[order] ?? ''}'.compareTo('${b.data()[order] ?? ''}'),
+    );
+    return compatibilityPage(
+      docs,
+      (d) => HistoryReference(d.id, '${legacyFields(d.data())[label] ?? d.id}'),
+      cursor: cursor,
     );
   }
 
@@ -54,7 +46,10 @@ class InventoryTransactionService {
         .orderBy('transactionDate', descending: true)
         .limit(50)
         .get();
-    return snapshot.docs.map(InventoryTransaction.fromDocument).toList();
+    return snapshot.docs
+        .where((d) => isOperationalRecord(d.data()))
+        .map(InventoryTransaction.fromDocument)
+        .toList();
   }
 
   Future<List<InventoryTransaction>> getTransactionsByItemId(
@@ -66,7 +61,10 @@ class InventoryTransactionService {
         .orderBy('transactionDate', descending: true)
         .limit(50)
         .get();
-    return snapshot.docs.map(InventoryTransaction.fromDocument).toList();
+    return snapshot.docs
+        .where((d) => isOperationalRecord(d.data()))
+        .map(InventoryTransaction.fromDocument)
+        .toList();
   }
 
   Future<FirestorePage<InventoryTransaction>> fetchPage({
@@ -76,36 +74,46 @@ class InventoryTransactionService {
     DateTime? until,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    Query<Map<String, dynamic>> q = _collection;
-    if (field != null && value != null && value.isNotEmpty) {
-      if (!{
-        'itemId',
-        'batchId',
-        'logbookId',
-        'moduleType',
-        'type',
-        'source',
-      }.contains(field)) {
-        throw ArgumentError('Filter histori tidak valid.');
-      }
-      q = q.where(field, isEqualTo: value);
+    if (field != null &&
+        !{
+          'itemId',
+          'batchId',
+          'logbookId',
+          'moduleType',
+          'type',
+          'source',
+        }.contains(field)) {
+      throw ArgumentError('Filter histori tidak valid.');
     }
-    if (from != null) {
-      q = q.where(
-        'transactionDate',
-        isGreaterThanOrEqualTo: Timestamp.fromDate(from),
-      );
-    }
-    if (until != null) {
-      q = q.where('transactionDate', isLessThan: Timestamp.fromDate(until));
-    }
-    q = q.orderBy('transactionDate', descending: true).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final result = await q.get();
-    return FirestorePage(
-      result.docs.map(InventoryTransaction.fromDocument).toList(),
-      result.docs.lastOrNull,
-      result.docs.length == 20,
+    final docs =
+        (await operationalCollection(
+            _firestore,
+            'inventory_transactions',
+          )).where((doc) {
+            final d = doc.data();
+            if (field != null &&
+                value != null &&
+                value.isNotEmpty &&
+                d[field] != value) {
+              return false;
+            }
+            if (d['transactionDate'] is! Timestamp) {
+              throw const FormatException('Tanggal ledger tidak valid.');
+            }
+            final date = (d['transactionDate'] as Timestamp).toDate();
+            return (from == null || !date.isBefore(from)) &&
+                (until == null || date.isBefore(until));
+          }).toList()
+          ..sort((a, b) {
+            final order = (b.data()['transactionDate'] as Timestamp).compareTo(
+              a.data()['transactionDate'] as Timestamp,
+            );
+            return order == 0 ? a.id.compareTo(b.id) : order;
+          });
+    return compatibilityPage(
+      docs,
+      InventoryTransaction.fromDocument,
+      cursor: cursor,
     );
   }
 

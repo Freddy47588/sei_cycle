@@ -782,3 +782,45 @@ test('phase06 finance cannot manufacture orphan audit or initial edit pointer',a
   await assertFails(setDoc(doc(db,'finance_transactions/manual/edits/orphan'),{
     before:old,after:old,payload:'forged',editedBy:'finance',editedAt:serverTimestamp()}));
 });
+
+for (const role of ['admin', 'finance', 'field', 'reader', 'inactive']) {
+  test(`post-phase06 report metadata privacy for ${role}`, async () => {
+    await env.withSecurityRulesDisabled(async c => {
+      await setDoc(doc(c.firestore(), 'report_metadata/private'), { type: 'finance', totalIncome: 1234 });
+    });
+    const check = ['admin', 'finance'].includes(role) ? assertSucceeds : assertFails;
+    await check(getDoc(doc(dbFor(role), 'report_metadata/private')));
+    await check(getDocs(collection(dbFor(role), 'report_metadata')));
+  });
+}
+
+for (const marker of [{isSampleData: true}, {createdBy: 'sample_seed'}, {sampleVersion: 'v2'}]) {
+  test(`post-phase06 sample stock cannot mutate ${Object.keys(marker)[0]}`, async () => {
+    await seedStock();
+    await env.withSecurityRulesDisabled(async c => updateDoc(doc(c.firestore(), 'inventory/feed'), marker));
+    await assertFails(mutate(dbFor('field'), 'sample-mutation'));
+    assert.equal((await getDoc(doc(dbFor('field'), 'inventory/feed'))).data().currentStock, 20);
+    assert.equal((await getDocs(collection(dbFor('field'), 'inventory_transactions'))).size, 0);
+  });
+}
+
+for (const role of ['admin', 'finance', 'field', 'reader', 'inactive']) {
+  test(`live alignment legacy collection privacy for ${role}`, async () => {
+    await env.withSecurityRulesDisabled(async c => {
+      await setDoc(doc(c.firestore(), 'finance_records/legacy'), {amount: 10, type: 'income'});
+      await setDoc(doc(c.firestore(), 'inventory_items/legacy'), {current_stock: 3});
+    });
+    const db = dbFor(role);
+    await (['admin','finance'].includes(role) ? assertSucceeds : assertFails)(getDocs(query(collection(db, 'finance_records'), orderBy('__name__'), limit(100))));
+    await (role !== 'inactive' ? assertSucceeds : assertFails)(getDocs(query(collection(db, 'inventory_items'), orderBy('__name__'), limit(100))));
+    await assertFails(updateDoc(doc(db, 'finance_records/legacy'), {amount: 999}));
+    await assertFails(updateDoc(doc(db, 'inventory_items/legacy'), {current_stock: 999}));
+  });
+}
+for (const marker of [{isSampleData: true}, {sampleVersion: 'v2'}, {createdBy: 'sample_seed'}]) {
+  test(`live alignment operational input refuses seed metadata ${Object.keys(marker)[0]}`, async () => {
+    const data = {...entry('new'), createdAt: serverTimestamp(), updatedAt: serverTimestamp(), ...marker};
+    await assertFails(setDoc(doc(dbFor('field'), 'logbooks/new'), data));
+    assert.equal((await getDoc(doc(dbFor('field'), 'logbooks/new'))).exists(), false);
+  });
+}

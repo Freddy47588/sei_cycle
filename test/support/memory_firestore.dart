@@ -8,6 +8,7 @@ class MemoryFirestore implements FirebaseFirestore {
   final queryLimits = <String, List<int?>>{};
   final aggregateQueries = <String>[];
   final queryErrors = <String, Object>{};
+  final queryFailureAfter = <String, int>{};
   bool failCommit = false;
   bool commitThenDeny = false;
   bool denyNextCommittedWrite = false;
@@ -146,7 +147,9 @@ class MemoryCollection implements CollectionReference<Map<String, dynamic>> {
     }
     if (invocation.memberName == #count) return MemoryAggregate(this);
     if (invocation.memberName == #get) {
-      if (database.queryErrors[path] case final error?) {
+      if (database.queryErrors[path] case final error?
+          when database.queries.where((q) => q == path).length >=
+              (database.queryFailureAfter[path] ?? 0)) {
         return Future<QuerySnapshot<Map<String, dynamic>>>.error(error);
       }
       database.queries.add(path);
@@ -229,6 +232,8 @@ class MemoryQuerySnapshot implements QuerySnapshot<Map<String, dynamic>> {
   MemoryQuerySnapshot(this.docs);
   @override
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
+  @override
+  SnapshotMetadata get metadata => MemorySnapshotMetadata();
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -316,6 +321,15 @@ class MemoryAggregateSnapshot implements AggregateQuerySnapshot {
   MemoryAggregateSnapshot(this.count);
   @override
   final int count;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class MemorySnapshotMetadata implements SnapshotMetadata {
+  @override
+  bool get isFromCache => false;
+  @override
+  bool get hasPendingWrites => false;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

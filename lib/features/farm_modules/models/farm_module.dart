@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../core/utils/firestore_fields.dart';
@@ -26,11 +27,13 @@ class FarmModule {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return FarmModule(
-      id: stringField(data, const [
-        'id',
-        'moduleType',
-        'module_id',
-      ], fallback: document.id),
+      id: canonicalModuleId(
+        stringField(data, const [
+          'id',
+          'moduleType',
+          'module_id',
+        ], fallback: document.id),
+      ),
       name: stringField(data, const [
         'name',
         'module_name',

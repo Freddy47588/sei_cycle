@@ -1,3 +1,4 @@
+import '../../../core/utils/audit_mode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +18,7 @@ class UserProfileService {
       _firestore.collection(FirestoreCollections.users);
 
   Future<void> ensureUserDocument(User user, {String? name}) async {
+    if (readOnlyAudit) return;
     try {
       final reference = _users.doc(user.uid);
       final snapshot = await reference.get();
@@ -75,6 +77,7 @@ class UserProfileService {
   }
 
   Future<void> updateName(String uid, String name) {
+    requireWritesEnabled();
     requireTrimmed(uid, 'uid');
     requireTrimmed(name, 'name');
     return _users.doc(uid).update({
@@ -88,6 +91,7 @@ class UserProfileService {
     required String role,
     bool? isActive,
   }) {
+    requireWritesEnabled();
     requireTrimmed(uid, 'uid');
     final assignableRole = AppRoles.assignableRole(role);
     if (!AppRoles.isAssignable(assignableRole)) {

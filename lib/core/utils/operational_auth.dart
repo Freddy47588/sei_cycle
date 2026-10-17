@@ -1,3 +1,4 @@
+import 'audit_mode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../features/profile/models/app_user.dart';
 
@@ -34,6 +35,7 @@ Future<T> runOperationalTransaction<T>(
   FirebaseFirestore db,
   TransactionHandler<T> body,
 ) async {
+  requireWritesEnabled();
   for (var attempt = 0; ; attempt++) {
     try {
       return await db.runTransaction(body);

@@ -44,3 +44,12 @@ DateTime dateTimeField(
   if (value is DateTime) return value;
   return fallback ?? DateTime.fromMillisecondsSinceEpoch(0);
 }
+
+/// Use for persisted monetary amounts and balances where zero is not a safe default.
+double requiredNumberField(Map<String, dynamic> data, List<String> keys) {
+  final value = fieldValue(data, keys);
+  if (value is! num || !value.isFinite) {
+    throw const FormatException('Angka bisnis tidak valid.');
+  }
+  return value.toDouble();
+}

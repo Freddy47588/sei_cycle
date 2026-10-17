@@ -1,3 +1,4 @@
+import '../../../core/utils/legacy_firestore.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/farm_modules.dart';
@@ -106,27 +107,15 @@ class CircularFlowService {
     if (!isLogbook && kind != 'inventory_transactions') {
       throw ArgumentError('Jenis referensi tidak valid.');
     }
-    Query<Map<String, dynamic>> q = _firestore.collection(kind);
-    if (isLogbook) q = q.where('isDeleted', isEqualTo: false);
-    q = q
-        .orderBy(
-          isLogbook ? 'activityDate' : 'transactionDate',
-          descending: true,
-        )
-        .limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final p = await q.get();
-    return FirestorePage(
-      p.docs
-          .map(
-            (d) => FlowReference(
-              d.id,
-              '${d.data()[isLogbook ? "title" : "itemName"] ?? d.id} · ${FarmModules.nameOf('${d.data()["moduleType"] ?? ""}')}',
-            ),
-          )
-          .toList(),
-      p.docs.lastOrNull,
-      p.docs.length == 20,
+    final docs = await operationalCollection(_firestore, kind);
+    docs.sort((a, b) => a.id.compareTo(b.id));
+    return compatibilityPage(
+      docs,
+      (d) => FlowReference(
+        d.id,
+        '${legacyFields(d.data())[isLogbook ? "title" : "itemName"] ?? d.id}',
+      ),
+      cursor: cursor,
     );
   }
 
@@ -229,43 +218,43 @@ class CircularFlowService {
     String? material,
     DocumentSnapshot<Map<String, dynamic>>? cursor,
   }) async {
-    var q = queryPeriod(
-      start,
-      end,
-      source: source,
-      destination: destination,
-      material: material,
-    ).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final r = await q.get();
-    return FirestorePage(
-      r.docs.map(CircularFlow.fromDocument).toList(),
-      r.docs.lastOrNull,
-      r.docs.length == 20,
-    );
+    final docs =
+        (await operationalCollection(_firestore, 'circular_flows')).where((
+          doc,
+        ) {
+          final f = CircularFlow.fromDocument(doc);
+          return f.isActual &&
+              !f.flowDate.isBefore(start) &&
+              f.flowDate.isBefore(end) &&
+              (source == null || f.sourceModuleType == source) &&
+              (destination == null || f.destinationModuleType == destination) &&
+              (material == null || f.materialName == material);
+        }).toList()..sort(
+          (a, b) => CircularFlow.fromDocument(
+            b,
+          ).flowDate.compareTo(CircularFlow.fromDocument(a).flowDate),
+        );
+    return compatibilityPage(docs, CircularFlow.fromDocument, cursor: cursor);
   }
 
   Future<List<CircularFlow>> getRecentFlows({int limit = 5}) async {
-    final s = await _collection
-        .orderBy('flowDate', descending: true)
-        .limit(limit.clamp(1, 50))
-        .get();
-    return s.docs
-        .map(CircularFlow.fromDocument)
-        .where((f) => f.isActual)
-        .toList();
+    final docs = await operationalCollection(_firestore, 'circular_flows');
+    final flows =
+        docs.map(CircularFlow.fromDocument).where((f) => f.isActual).toList()
+          ..sort((a, b) => b.flowDate.compareTo(a.flowDate));
+    return flows.take(limit.clamp(1, 50)).toList();
   }
 
-  Stream<List<CircularFlow>> streamRecentFlows({int limit = 5}) => _collection
-      .orderBy('flowDate', descending: true)
-      .limit(limit.clamp(1, 50))
-      .snapshots()
-      .map(
-        (s) => s.docs
-            .map(CircularFlow.fromDocument)
-            .where((f) => f.isActual)
-            .toList(),
-      );
+  Stream<List<CircularFlow>> streamRecentFlows({int limit = 5}) =>
+      watchOperationalCollections(_firestore, ['circular_flows']).map((docs) {
+        final flows =
+            docs
+                .map(CircularFlow.fromDocument)
+                .where((f) => f.isActual)
+                .toList()
+              ..sort((a, b) => b.flowDate.compareTo(a.flowDate));
+        return flows.take(limit.clamp(1, 50)).toList();
+      });
 }
 
 class FlowReference {

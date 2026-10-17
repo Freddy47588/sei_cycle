@@ -1,3 +1,4 @@
+import 'schedule_item.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum ScheduleView { today, upcoming, overdue, done, all }
@@ -20,6 +21,32 @@ class ScheduleFilter {
   final ScheduleView view;
   final DateTime? date;
   final String? batchId, moduleType;
+
+  bool matches(ScheduleItem item, DateTime now) {
+    if (item.isDeleted ||
+        (batchId != null && item.batchId != batchId) ||
+        (moduleType != null && item.moduleId != moduleType)) {
+      return false;
+    }
+    if (view == ScheduleView.done && item.status != 'done') return false;
+    if ({ScheduleView.upcoming, ScheduleView.overdue}.contains(view) &&
+        item.status != 'pending') {
+      return false;
+    }
+    if (view == ScheduleView.upcoming && item.scheduledAt.isBefore(now)) {
+      return false;
+    }
+    if (view == ScheduleView.overdue && !item.scheduledAt.isBefore(now)) {
+      return false;
+    }
+    if (date != null || view == ScheduleView.today) {
+      final day = date ?? now;
+      return item.scheduledAt.year == day.year &&
+          item.scheduledAt.month == day.month &&
+          item.scheduledAt.day == day.day;
+    }
+    return true;
+  }
 
   Query<Map<String, dynamic>> apply(
     Query<Map<String, dynamic>> q,

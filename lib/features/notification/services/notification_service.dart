@@ -1,3 +1,5 @@
+import '../../../core/utils/audit_mode.dart';
+import '../../../core/utils/legacy_firestore.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -34,7 +36,10 @@ class NotificationService {
         .where('isRead', isEqualTo: false)
         .where('targetRole', whereIn: [role, 'all']);
 
-    return _watchCombined(ownQuery, roleQuery).map((docs) => docs.length);
+    return _watchCombined(
+      ownQuery,
+      roleQuery,
+    ).asyncMap(_excludeSeedReferences).map((docs) => docs.length);
   }
 
   Stream<List<AppNotification>> watchNotifications({
@@ -59,14 +64,50 @@ class NotificationService {
     return _watchCombined(
       ownQuery.orderBy('createdAt', descending: true),
       roleQuery.orderBy('createdAt', descending: true),
-    ).map((docs) {
+    ).asyncMap(_excludeSeedReferences).map((docs) {
       final notifications = docs.map(AppNotification.fromDocument).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return notifications;
     });
   }
 
+  // Historical alerts generated from seed masters are not operational signals.
+  // The source records and alerts remain untouched for the integrity audit.
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  _excludeSeedReferences(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
+    final parents = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    final visible = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (final doc in docs) {
+      final d = doc.data();
+      final collection = d['relatedCollection'], id = d['relatedId'];
+      if (collection is String &&
+          {
+            'inventory',
+            'schedules',
+            'logbooks',
+            'batches',
+          }.contains(collection) &&
+          id is String &&
+          id.isNotEmpty &&
+          !id.contains('/')) {
+        final path = '$collection/$id';
+        final parent = parents[path] ??= await _firestore
+            .collection(collection)
+            .doc(id)
+            .get(const GetOptions(source: Source.server));
+        if (parent.exists && !isOperationalRecord(parent.data() ?? {})) {
+          continue;
+        }
+      }
+      visible.add(doc);
+    }
+    return visible;
+  }
+
   Future<void> markAsRead(String id) {
+    requireWritesEnabled();
     requireTrimmed(id, 'id');
     return _collection.doc(id).update({
       'isRead': true,
@@ -75,6 +116,7 @@ class NotificationService {
   }
 
   Future<void> delete(String id, {required String userId}) {
+    requireWritesEnabled();
     requireTrimmed(id, 'id');
     requireTrimmed(userId, 'userId');
     return _collection.doc(id).update({
@@ -88,6 +130,7 @@ class NotificationService {
     required String userId,
     required String role,
   }) async {
+    requireWritesEnabled();
     final ownSnapshot = await _collection
         .where('isDeleted', isEqualTo: false)
         .where('isRead', isEqualTo: false)
@@ -128,6 +171,8 @@ class NotificationService {
     String relatedId = '',
     DateTime? scheduledAt,
   }) async {
+    requireWritesEnabled();
+    requireWritesEnabled();
     requireTrimmed(title, 'title');
     requireTrimmed(body, 'body');
     requireTrimmed(type, 'type');
@@ -155,6 +200,7 @@ class NotificationService {
     required String role,
     required Iterable<InventoryItem> items,
   }) async {
+    requireWritesEnabled();
     for (final item in items.take(20)) {
       await createLowStockAlert(
         userId: userId,
@@ -177,6 +223,7 @@ class NotificationService {
     required double minStock,
     required String unit,
   }) async {
+    requireWritesEnabled();
     requireTrimmed(userId, 'userId');
     requireTrimmed(role, 'role');
     requireTrimmed(itemId, 'itemId');
@@ -234,6 +281,7 @@ class NotificationService {
     required String unit,
     String targetRole = 'admin',
   }) async {
+    requireWritesEnabled();
     await createLowStockAlert(
       userId: userId,
       role: targetRole,
@@ -251,6 +299,7 @@ class NotificationService {
     required String userId,
     required String role,
   }) async {
+    requireWritesEnabled();
     requireTrimmed(scheduleId, 'scheduleId');
     requireTrimmed(userId, 'userId');
     requireTrimmed(role, 'role');
@@ -353,23 +402,31 @@ Stream<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _watchCombined(
     final first = firstSnapshot;
     final second = secondSnapshot;
     if (first == null || second == null || controller.isClosed) return;
+    if (first.docs.length > 500 || second.docs.length > 500) {
+      controller.addError(
+        StateError(
+          'Jumlah notifikasi belum dapat dihitung: batas baca terlampaui.',
+        ),
+      );
+      return;
+    }
 
     controller.add(
       {
         for (final document in first.docs) document.id: document,
         for (final document in second.docs) document.id: document,
-      }.values.toList(),
+      }.values.where((d) => isOperationalRecord(d.data())).toList(),
     );
   }
 
   controller =
       StreamController<List<QueryDocumentSnapshot<Map<String, dynamic>>>>(
         onListen: () {
-          firstSubscription = first.snapshots().listen((snapshot) {
+          firstSubscription = first.limit(501).snapshots().listen((snapshot) {
             firstSnapshot = snapshot;
             emit();
           }, onError: controller.addError);
-          secondSubscription = second.snapshots().listen((snapshot) {
+          secondSubscription = second.limit(501).snapshots().listen((snapshot) {
             secondSnapshot = snapshot;
             emit();
           }, onError: controller.addError);

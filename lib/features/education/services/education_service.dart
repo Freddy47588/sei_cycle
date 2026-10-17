@@ -1,3 +1,4 @@
+import '../../../core/utils/audit_mode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
 
@@ -93,6 +94,7 @@ class EducationService {
     required String userId,
     String thumbnailUrl = '',
   }) async {
+    requireWritesEnabled();
     _validateTitle(title, userId);
     requireOneOf(status, EducationStatus.values, 'status');
 
@@ -139,6 +141,7 @@ class EducationService {
     String duration = '',
     String thumbnailUrl = '',
   }) async {
+    requireWritesEnabled();
     _validateTitle(title, userId);
     requireTrimmed(externalVideoUrl, 'externalVideoUrl');
     requireOneOf(status, EducationStatus.values, 'status');
@@ -187,6 +190,7 @@ class EducationService {
     List<String> toolsNeeded = const [],
     String safetyNotes = '',
   }) async {
+    requireWritesEnabled();
     _validateTitle(title, userId);
     if (steps.isEmpty) {
       throw ArgumentError('SOP harus memiliki minimal satu langkah.');
@@ -301,6 +305,7 @@ class EducationService {
     required String status,
     required String userId,
   }) {
+    requireWritesEnabled();
     requireTrimmed(id, 'id');
     requireTrimmed(userId, 'userId');
     requireOneOf(status, EducationStatus.values, 'status');
@@ -316,6 +321,7 @@ class EducationService {
   // ---------------------------------------------------------------------------
 
   Future<void> delete(String id, {required String userId}) {
+    requireWritesEnabled();
     requireTrimmed(id, 'id');
     requireTrimmed(userId, 'userId');
     return _collection.doc(id).update({

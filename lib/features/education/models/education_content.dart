@@ -88,6 +88,8 @@ class EducationContent {
   final String authorId;
 
   final String createdBy;
+  String get displayTitle =>
+      createdBy == 'sample_seed' ? 'Contoh / Simulasi - $title' : title;
   final String updatedBy;
   final DateTime createdAt;
   final DateTime updatedAt;

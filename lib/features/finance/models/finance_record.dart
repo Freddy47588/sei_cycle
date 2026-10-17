@@ -4,6 +4,8 @@ import '../../../core/utils/firestore_fields.dart';
 
 class FinanceRecord {
   const FinanceRecord({
+    this.legacyReadOnly = false,
+    this.requiresProvenanceReview = false,
     this.saleId = '',
     this.version = 0,
     required this.id,
@@ -21,6 +23,8 @@ class FinanceRecord {
     required this.isDeleted,
   });
 
+  final bool legacyReadOnly;
+  final bool requiresProvenanceReview;
   final String saleId;
   final int version;
   bool get isSaleLinked => saleId.isNotEmpty;
@@ -45,12 +49,17 @@ class FinanceRecord {
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     return FinanceRecord(
+      requiresProvenanceReview:
+          data['createdBy'] != 'sample_seed' &&
+          (data['isSampleData'] == true || data['sampleVersion'] == 'v2'),
+      legacyReadOnly:
+          document.reference.path.split('/').first != 'finance_transactions',
       saleId: stringField(data, const ['saleId']),
       version: (data['version'] as num?)?.toInt() ?? 0,
-      id: stringField(data, const ['id'], fallback: document.id),
+      id: document.id,
       type: stringField(data, const ['type'], fallback: 'expense'),
       category: stringField(data, const ['category', 'title']),
-      amount: doubleField(data, const ['amount']),
+      amount: requiredNumberField(data, const ['amount']),
       date: dateTimeField(data, const ['date']),
       notes: stringField(data, const ['notes', 'description', 'note']),
       paymentMethod: stringField(data, const [

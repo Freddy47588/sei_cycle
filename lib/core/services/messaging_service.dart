@@ -1,3 +1,4 @@
+import '../utils/audit_mode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -20,6 +21,7 @@ class MessagingService {
   }
 
   Future<String?> requestPermissionAndSaveToken(String userId) async {
+    if (readOnlyAudit) return null;
     final token = await requestPermissionAndGetToken();
     if (token == null || token.isEmpty) return null;
 

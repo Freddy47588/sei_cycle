@@ -1,3 +1,5 @@
+import '../../../core/utils/legacy_firestore.dart';
+import '../../../core/utils/sample_data_guard.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/constants/farm_modules.dart';
@@ -19,22 +21,38 @@ class ScheduleService {
     DocumentSnapshot<Map<String, dynamic>>? cursor,
     DateTime? now,
   }) async {
-    var q = filter.apply(_collection, now ?? DateTime.now()).limit(20);
-    if (cursor != null) q = q.startAfterDocument(cursor);
-    final result = await q.get();
-    return FirestorePage(
-      result.docs.map(ScheduleItem.fromDocument).toList(),
-      result.docs.lastOrNull,
-      result.docs.length == 20,
-    );
+    final anchor = now ?? DateTime.now();
+    final docs =
+        (await operationalCollection(_db, 'schedules'))
+            .where((d) => filter.matches(ScheduleItem.fromDocument(d), anchor))
+            .toList()
+          ..sort((a, b) {
+            final order = ScheduleItem.fromDocument(
+              a,
+            ).scheduledAt.compareTo(ScheduleItem.fromDocument(b).scheduledAt);
+            final stable = order == 0 ? a.id.compareTo(b.id) : order;
+            return filter.view == ScheduleView.done ||
+                    filter.view == ScheduleView.overdue
+                ? -stable
+                : stable;
+          });
+    return compatibilityPage(docs, ScheduleItem.fromDocument, cursor: cursor);
   }
 
   Stream<List<ScheduleItem>> watchSchedules({DateTime? date}) =>
-      ScheduleFilter(view: ScheduleView.all, date: date)
-          .apply(_collection, DateTime.now())
-          .limit(100)
-          .snapshots()
-          .map((s) => s.docs.map(ScheduleItem.fromDocument).toList());
+      watchOperationalCollections(_db, ['schedules']).map(
+        (docs) =>
+            docs
+                .map(ScheduleItem.fromDocument)
+                .where(
+                  (s) => ScheduleFilter(
+                    view: ScheduleView.all,
+                    date: date,
+                  ).matches(s, DateTime.now()),
+                )
+                .toList()
+              ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt)),
+      );
 
   Future<void> _validateBatch(
     Transaction tx,
@@ -44,6 +62,7 @@ class ScheduleService {
     if (batchId == null) return;
     validateDocumentId(batchId);
     final b = await tx.get(_db.collection('batches').doc(batchId));
+    requireOperationalData([b]);
     if (!b.exists ||
         b.data()?['isDeleted'] != false ||
         b.data()?['status'] != 'active' ||
@@ -93,6 +112,7 @@ class ScheduleService {
       await authorizeOperations(_db, tx, userId);
       final ref = _collection.doc(documentId);
       final old = await tx.get(ref);
+      requireOperationalData([old]);
       if (id == null && old.exists) {
         if (old.data()?['creationPayload'] != payload) {
           throw StateError('Request ID sama dengan payload berbeda.');
@@ -151,6 +171,7 @@ class ScheduleService {
       await authorizeOperations(_db, tx, userId);
       final ref = _collection.doc(id);
       final doc = await tx.get(ref);
+      requireOperationalData([doc]);
       if (!doc.exists || doc.data()?['isDeleted'] != false) {
         throw StateError('Jadwal tidak tersedia.');
       }
@@ -185,6 +206,7 @@ class ScheduleService {
       if (!actor.isAdmin) throw StateError('Hanya admin yang dapat menghapus.');
       final ref = _collection.doc(id);
       final doc = await tx.get(ref);
+      requireOperationalData([doc]);
       if (!doc.exists) throw StateError('Jadwal tidak tersedia.');
       if (doc.data()?['isDeleted'] == true) return;
       if (ScheduleItem.fromDocument(doc).updatedAt != expectedUpdatedAt ||
@@ -200,17 +222,17 @@ class ScheduleService {
   }
 
   Future<List<ScheduleItem>> reminderCandidates(DateTime now) async {
-    final result = await _collection
-        .where('isDeleted', isEqualTo: false)
-        .where('status', isEqualTo: 'pending')
-        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(now))
-        .where(
-          'date',
-          isLessThan: Timestamp.fromDate(now.add(const Duration(days: 14))),
-        )
-        .orderBy('date')
-        .limit(50)
-        .get();
-    return result.docs.map(ScheduleItem.fromDocument).toList();
+    final items =
+        (await operationalCollection(_db, 'schedules'))
+            .map(ScheduleItem.fromDocument)
+            .where(
+              (s) =>
+                  s.status == 'pending' &&
+                  !s.scheduledAt.isBefore(now) &&
+                  s.scheduledAt.isBefore(now.add(const Duration(days: 14))),
+            )
+            .toList()
+          ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+    return items.take(50).toList();
   }
 }

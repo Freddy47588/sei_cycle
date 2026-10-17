@@ -211,6 +211,7 @@ void main() {
         'kg',
         20,
       ).data;
+      db.documents['batches/B1'] = {'isDeleted': false};
       db.documents['inventory_transactions/movement'] = {
         'quantity': 20,
         'logbookId': 'log',
@@ -220,7 +221,7 @@ void main() {
         firestore: db,
       ).load(period, 'lele', 'B1');
       expect(result.production, {'Lele Panen (kg)': 20});
-      expect(db.queries, isNot(contains('inventory_transactions')));
+      expect(db.queries, contains('inventory_transactions'));
       expect(db.queries, isNot(contains('inventory')));
     },
   );
@@ -298,13 +299,15 @@ void main() {
       plugin: 'cloud_firestore',
       code: 'failed-precondition',
     );
-    await expectLater(
-      DashboardService(firestore: db).load(includeFinance: false),
-      throwsA(isA<FirebaseException>()),
-    );
+    final failed = await DashboardService(
+      firestore: db,
+    ).load(includeFinance: false);
+    expect(failed.todayLogCount, isNull);
+    expect(failed.sectionErrors['logs'], isA<FirebaseException>());
+    expect(failed.activeModuleCount, 0);
   });
   test(
-    'global KPI counts all rows while previews stay bounded and stock ignores legacy flag',
+    'oversize source is unavailable while independent stock and schedule totals remain accurate',
     () async {
       final db = MemoryFirestore();
       db.documents['farm_modules/active'] = {'isActive': true};
@@ -352,7 +355,9 @@ void main() {
       expect(summary.activeModuleCount, 1);
       expect(summary.activeBatchCount, 1);
       expect(summary.completedBatchCount, 1);
-      expect(summary.todayLogCount, 610);
+      expect(summary.todayLogCount, isNull);
+      expect(summary.sectionErrors['logs'], isA<StateError>());
+      expect(summary.recentActivities, isEmpty);
       expect(summary.todayScheduleCount, 4);
       expect(
         [
@@ -364,14 +369,14 @@ void main() {
       );
       expect(summary.lowStockCount, 1);
       expect(summary.outOfStockCount, 1);
-      expect(db.aggregateQueries, hasLength(8));
+      expect(db.aggregateQueries, isEmpty);
       expect(
         db.queryLimits.values.expand((v) => v).every((limit) => limit != null),
         isTrue,
       );
     },
   );
-  test('stock beyond 200 is explicitly partial', () async {
+  test('complete ID pagination counts stock beyond 200 accurately', () async {
     final db = MemoryFirestore();
     for (var i = 0; i < 205; i++) {
       db.documents['inventory/$i'] = {
@@ -385,9 +390,10 @@ void main() {
       firestore: db,
       clock: () => now,
     ).load(includeFinance: false);
-    expect(summary.inventoryTruncated, isTrue);
-    expect(summary.inventoryLoaded, 200);
-    expect(summary.outOfStockCount, 200);
+    expect(summary.inventoryTruncated, isFalse);
+    expect(summary.inventoryLoaded, 205);
+    expect(summary.outOfStockCount, 205);
+    expect(summary.lowStockCount, 0);
   });
   for (final profile in [
     user('operator_lapangan'),
@@ -498,13 +504,14 @@ void main() {
         'currentStock': double.nan,
         'minStock': 0,
       };
-      await expectLater(
-        DashboardService(
-          firestore: db,
-          clock: () => now,
-        ).load(includeFinance: false),
-        throwsFormatException,
-      );
+      final summary = await DashboardService(
+        firestore: db,
+        clock: () => now,
+      ).load(includeFinance: false);
+      expect(summary.lowStockCount, isNull);
+      expect(summary.outOfStockCount, isNull);
+      expect(summary.sectionErrors['inventory'], isA<FormatException>());
+      expect(summary.todayLogCount, 0);
     },
   );
 }

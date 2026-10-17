@@ -365,3 +365,15 @@ private/
 
 # Python audit tool cache
 __pycache__/
+
+# Private Codex checkpoints and local assistant configuration
+CODEX_PROGRESS.md
+codex_progress.md
+.codex/
+
+# Private application builds and raw production audit exports
+*.apk
+*.aab
+production-snapshot*.json
+reconciliation-snapshot*.json
+admin-evidence*.json

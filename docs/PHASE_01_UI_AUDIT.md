@@ -4,11 +4,11 @@
 
 ## Perlindungan workspace dan sumber desain
 
-Workspace awal berada di `main` dengan lima perubahan lokal: registrant `.cc`/`.h`/CMake Linux, registrant macOS, dan `pubspec.lock`. Sebelum berpindah branch, seluruhnya diamankan dalam stash bernama `user-local-before-phase01-20261016` serta salinan patch/status di `C:/Users/Fredi Irawan/.codex/phase01-seicycle-backup-20261016/`. Stash tetap disimpan, tidak diterapkan ke branch berbeda.
+Workspace awal berada di `main` dengan lima perubahan lokal: registrant `.cc`/`.h`/CMake Linux, registrant macOS, dan `pubspec.lock`. Sebelum berpindah branch, seluruhnya diamankan dalam stash bernama `user-local-before-phase01-20261016` serta salinan patch/status di `<private local workspace>`. Stash tetap disimpan, tidak diterapkan ke branch berbeda.
 
 Branch kerja melacak `origin/feature/operational-v2`. Tidak ada perubahan pada branch sumber, push, merge, rebase, PR, reset destruktif, seed, deployment rules, atau penulisan database.
 
-Enam screenshot dibaca dari arsip read-only `origin/main`, bersama kode theme, shell, dan halaman asli. Salinan lokal: `C:/Users/Fredi Irawan/.codex/phase01-seicycle-reference/`. Referensi berasal dari objek Git lokal; tidak mengklaim telah melakukan fetch terbaru.
+Enam screenshot dibaca dari arsip read-only `origin/main`, bersama kode theme, shell, dan halaman asli. Salinan lokal: `<private local workspace>`. Referensi berasal dari objek Git lokal; tidak mengklaim telah melakukan fetch terbaru.
 
 ## Baseline
 

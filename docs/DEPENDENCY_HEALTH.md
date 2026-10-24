@@ -84,4 +84,20 @@ Flutter 3.44.2 / Dart 3.12.2 retained. Removed Google Sign-In after provider/cal
 
 Official hosted metadata: 102 locked packages inspected, 101 successful metadata results without discontinued/retracted flags after targeted retries; path_parsing API retrieval remained unavailable and its [official maintained package page](https://pub.dev/packages/path_parsing) was checked separately. Direct upstream repository checks completed without archived/disabled results. Worker `npm audit --omit=dev` found zero advisory entries, but npm reports deprecated glob 10.5.0 and node-domexception 1.0.0 transitives under the maintained Admin SDK. These remain explicit production rollout review items; no override hides them. Existing excel/archive/native caveats still apply.
 
+## Phase 08 — 17 October 2026
+
+Flutter 3.44.2 / Dart 3.12.2 retained. Required resolver/outdated/analyzer commands were run before editing and repeated after a clean. **No dependency version, override or lockfile content changed.** Candidate app version advanced to 1.0.1+2; this is application versioning, not a package upgrade. Official metadata auditor completed all **102 hosted locked versions** and direct upstream repository checks with zero discontinued/retracted/error/archived/disabled flags. Private raw evidence remains ignored. `flutter pub outdated` still reports 38 upgradable locked dependencies and 13 constrained below resolvable; no mass upgrade was justified.
+
+Worker npm audit reports zero known advisory findings at check time. Existing deprecated `glob`/`node-domexception` transitives and `excel` maintenance/archive/image constraints remain explicit risks; no override suppresses them. Package metadata and an advisory scan do not establish every native/transitive API is free of deprecation or vulnerabilities.
+
+Android versions remain AGP 8.11.1 / Gradle 8.14 / Kotlin 2.2.20. The changed signing build script uses the supported Kotlin `compilerOptions`/`JvmTarget.JVM_17` API, replacing the deprecated `kotlinOptions.jvmTarget` setter. Gradle configuration/credential checks passed without that setter warning. Flutter's existing built-in-Kotlin migration warning and remaining Gradle deprecation summary are retained; they were not hidden. See the [official Kotlin compatibility table](https://kotlinlang.org/docs/gradle-configure-project.html), [AGP requirements](https://developer.android.com/build/releases/agp-8-11-0-release-notes) and [Flutter signing guide](https://docs.flutter.dev/deployment/android).
+
+Phase 08 adds actual Education article/video/SOP CRUD, retry and metadata-preservation tests; existing export round-trip tests remain part of the full suite. Final analyzer/test/build outcomes and native-device limitations are recorded in [Phase 08 test report](PHASE_08_TEST_REPORT.md).
+
 [Phase 07 report](PHASE_07_COMPLETION_REPORT.md) records test/build outcomes, actual capabilities and production gates. This audit does not establish that all transitive/native APIs are free of deprecation or vulnerabilities. The existing Kotlin migration warning remains; no major SDK migration or paid backend deployment was performed.
+
+## Resumed final verification ? 24 October 2026
+
+Toolchain remains Flutter 3.44.2/Dart 3.12.2; pub get, outdated and clean analyzer repeated. No lockfile/dependency version changed. Outdated now reports 39 upgradable locked packages and 13 constrained below resolvable. Final Flutter regression contains 503 passing tests including eight original-logo responsive cases. Android and dependency-metadata results are recorded in the Phase 08 test report.
+
+The resumed official metadata audit completed all 102 hosted versions and direct upstream checks with zero flags. Final debug/release builds passed; remaining KGP and native Java/unchecked-API warnings were retained, not suppressed.

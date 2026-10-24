@@ -1,175 +1,211 @@
-﻿# SeiCycle — Kebun Sei
+<div align="center">
+  <img src="reference/kebun-sei-logo.png" alt="Logo Kebun Sei" width="120" />
+  <h1>SeiCycle — Kebun Sei</h1>
+  <p><strong>Smart Integrated Farming System</strong></p>
+  <p>Operasional pertanian dan peternakan terintegrasi Kebun Sei, Pakisaji – Malang.</p>
+</div>
 
-Aplikasi **Flutter dan Dart** untuk operasional pertanian dan peternakan terintegrasi Kebun Sei: Ayam, Maggot BSF, Cacing Tanah, Tanaman, dan Lele.
+## 🌿 Tentang proyek
 
-SeiCycle menggunakan **Firebase Authentication** untuk autentikasi dan **Cloud Firestore sebagai database aplikasi**. Akses data langsung dari Flutter dilindungi Firestore Security Rules.
+SeiCycle adalah aplikasi Flutter untuk kegiatan, stok, produksi dan arus kas lima modul budidaya. Firebase Authentication menangani identitas; Cloud Firestore menyimpan data dengan Security Rules dan transaksi lintas dokumen. Ilustrasi siklus nutrisi menjelaskan konsep budidaya; transfer aktual dicatat tersendiri.
 
-## Fitur yang tersedia
+## Fitur utama
 
-- Login email/password dan Google, registrasi, profil, serta role pengguna.
-- Dashboard ringkasan modul, logbook, stok rendah, jadwal, aktivitas, dan keuangan sesuai hak akses. Error dan data kosong tidak diganti angka contoh.
-- Form Logbook original lima modul, simpan dengan perlindungan permintaan berulang, dan akses langsung ke catatan baru.
-- **Daftar Logbook** dengan pencarian pada catatan yang sudah dimuat, filter modul/tanggal, urutan terbaru/terlama, serta pagination 20 catatan.
-- **Detail Logbook** dari dokumen aktual, rincian bersatuan, relasi inventaris/produksi, dan edit catatan tambahan dengan audit trail untuk admin/operator lapangan. Koreksi kuantitas serta pembatalan belum diaktifkan.
-- Inventaris, jadwal, keuangan, rekomendasi berbasis aturan, dan laporan PDF/Excel.
-- Katalog edukasi artikel, SOP, serta video dari teks/URL eksternal; thumbnail dan gambar lokal sebagai fallback. Pembaca detail lengkap dikembangkan pada Phase 07.
-- Notifikasi dalam aplikasi melalui inbox Firestore dan pengingat lokal. FCM saat ini terbatas pada permission/token client; pengiriman push terjadwal dari server belum tersedia.
-- Profil dan penyiapan lima modul operasional resmi; aplikasi tidak menyediakan pembuatan/penghapusan transaksi demo.
+Empat tujuan utama: **Dashboard, Logbook, Edukasi, Notifikasi**. **Lainnya** membuka fitur tambahan di ponsel; sidebar tersedia mulai 768 px. Palet hijau/krem, logo dan istilah Indonesia dipertahankan. Data kosong, query gagal, hasil parsial dan nol ditampilkan sesuai maknanya. Aplikasi tidak membuat transaksi contoh atau menebak stok fisik dari ledger lama.
 
-Empat menu utama: **Dashboard, Logbook, Edukasi, Notifikasi**. Fitur tambahan di mobile tersedia melalui **Lainnya**. Sidebar tampil mulai lebar 768 px mengikuti shell asli `main`.
+## Lima modul budidaya
 
-## Finance, Penjualan dan Aliran Nutrisi — Phase 06
-
-- **Profil bersih dari demo:** fitur Seed/Hapus sampel dan service runtime sudah dihapus. Penyiapan lima modul operasional resmi tetap tersedia. Data produksi tidak dihapus; [prosedur audit/cleanup administratif](docs/PHASE_06_SAMPLE_DATA_CLEANUP.md) memerlukan review daftar aktual terlebih dahulu.
-- **Draft Logbook** bertahan saat berpindah menu selama sesi; draft dipisahkan per modul dan dibuang saat akun berganti/logout. Tidak menyimpan draft sebagai catatan final atau menulis ke Firebase sebelum Simpan.
-- **Keuangan** memiliki ringkasan pemasukan/pengeluaran/arus kas bersih, filter periode/jenis/kategori/modul, pencarian pada data dimuat, pagination dan detail audit. Form tetap terbuka ketika simpan gagal; retry menggunakan ID yang sama. Edit/soft delete manual menyimpan histori before/after; finance terkait sale tidak dapat diedit sepihak.
-- **Penjualan Hasil Panen:** admin menandai master hasil panen aktual sebagai layak dijual di Inventaris. Admin aktif mencatat penjualan lunas; operator keuangan dapat membaca. Sales, pengurangan stok, ledger keluar dan pemasukan disimpan atomik. Quantity maksimal tiga desimal; harga/total integer Rupiah dengan pembulatan half-up. Stok tidak boleh negatif. Receipt selesai permanen, tanpa cancel/reversal yang belum tersedia.
-- **Aliran Nutrisi Aktual:** pencatatan material, jumlah/satuan, sumber/tujuan, tanggal, batch dan referensi kegiatan opsional. Tidak mengubah stok atau menyimpan ilustrasi Dashboard sebagai transaksi. Dokumen lama tanpa provenance tetap terbaca dengan penjelasan bahwa belum terverifikasi.
-- Dashboard menampilkan ringkasan penjualan serta tautan aliran aktual. Laporan PDF/Excel memisahkan penjualan dari pemasukan agar tidak dihitung dua kali; akses finance mengikuti role. Ringkasan keuangan/penjualan maksimal500 transaksi, laporan maksimal1000 dokumen per sumber; jika melebihi batas, persempit periode/filter dan ekspor parsial tidak diklaim lengkap.
-
-Rules dan **93 composite indexes** perlu ditinjau/deploy manual sebelum menggunakan versi ini pada Firebase tujuan. Tidak ada deployment atau cleanup produksi otomatis. Detail kontrak, hasil pengujian, Android dan batas implementasi ada di [Phase 06](docs/PHASE_06_FINANCE_SALES_CIRCULAR_FLOW.md).
-
-## Role dan akses UI
-
-| Role | Akses |
+| Modul | Catatan operasional |
 | --- | --- |
-| `admin` | Seluruh menu dan pengelolaan sesuai kemampuan fitur |
-| `operator_lapangan` | Operasional, inventaris, jadwal, edukasi, notifikasi, rekomendasi operasional, laporan operasional/inventaris, profil |
-| `operator_keuangan` | Seluruh menu; pengelolaan keuangan; form Logbook dapat dibaca tetapi tombol simpan nonaktif |
-| `operator` | Role lama dipetakan ke `operator_lapangan` |
-| `mitra` / `peserta_edukasi` | Role lama tetap dapat membaca modul nonkeuangan |
+| 🐔 Ayam Kampung | Populasi, pakan, telur, mortalitas dan kesehatan |
+| 🐛 Maggot BSF | Limbah, fase, estimasi dan panen aktual |
+| 🪱 Cacing Tanah | Media, kelembapan, pakan dan kascing |
+| 🌿 Tanaman | Komoditas, blok, pertumbuhan, pemupukan dan panen |
+| 🐟 Lele | Tebar, pakan, pH, suhu, bobot dan panen |
 
-Keuangan dan laporan keuangan dibatasi ke admin/operator keuangan aktif melalui capability UI, guard service, dan Firestore Rules Phase 05. Operator lapangan, legacy read-only, akun inaktif dan pengguna tanpa autentikasi ditolak saat membaca `finance_transactions`, termasuk melalui SDK langsung. Pengelola perlu menerapkan Rules baru secara manual setelah review.
+## Autentikasi
 
-Akun baru memakai `operator_lapangan`. Pengelola berwenang mengatur role pada `users/{uid}`. Pastikan akun aktif melalui `isActive`/`is_active`.
+**Email/password**, registrasi, reset password, sesi dan logout. Google Sign-In sudah dihapus dari UI, layanan dan dependency. Reset memerlukan pengiriman email Firebase yang berfungsi. Akun baru memperoleh role operator lapangan; perubahan hak akses memakai workflow Admin tepercaya.
 
-## Dashboard Monitoring & Produktivitas
+## Role dan izin
 
-Dashboard mempertahankan banner hijau, kartu rounded, diagram nutrisi, timeline dan empat navigasi original. Sumber operasional tetap **Cloud Firestore**, tanpa dataset contoh otomatis. Grafik menggunakan **fl_chart 1.2.0** existing.
+| Role | Kemampuan utama |
+| --- | --- |
+| `admin` aktif | Operasional, keuangan, Edukasi dan panel Admin sesuai batas integritas |
+| `operator_lapangan` aktif | Tulis kegiatan, batch, inventaris, jadwal; laporan operasional |
+| `operator_keuangan` aktif | Baca operasional, kelola finance manual, baca penjualan/laporan keuangan |
+| `operator` | Alias operator lapangan |
+| `mitra`, `peserta_edukasi` | Pembaca modul nonkeuangan |
+| Inaktif / tanpa autentikasi | Ditolak dari data bisnis terlindungi |
 
-- **KPI aktual:** modul aktif, batch aktif/completed, aktivitas Logbook hari ini, jadwal pending/done/skipped, serta stok rendah/habis berdasarkan saldo aktual. Count global memakai agregasi; stok dibaca maksimal 200 item dan diberi label cakupan terbatas bila lebih banyak.
-- **Periode bersama:** Hari Ini, 7/30/90 Hari Terakhir, atau rentang custom maksimal 366 hari kalender lokal. Kartu kondisi terkini tetap berlabel **Saat Ini**; KPI harian tetap **Hari Ini**.
-- **Lima modul:** telur/populasi Ayam, limbah/fase/estimasi Maggot, kelembapan/pakan Cacing, tinggi/daun Tanaman, serta pH/suhu/pakan/bobot Lele. Metrik dan kelompok pengamatan dapat dipilih; satuan dan batch/komoditas dipisahkan. Hari tanpa data tidak diisi angka buatan.
-- **Monitoring batch:** semua status termasuk completed/archived dapat dipilih dari daftar berhalaman, dengan estimasi panen, aktivitas terakhir pada periode dan tautan Detail Batch. Catatan tanpa batch tetap terbaca.
-- **Produksi aktual:** hanya production result valid yang terhubung ke Logbook, per jenis produk/satuan. Tidak menjumlahkan ulang pengamatan dan mutasi stok. Estimasi/target bukan panen aktual; sumber yang tidak dapat diverifikasi diberi pesan ketidakpastian.
-- **Timeline terpadu:** Logbook terbaru, jadwal hari ini, dan checklist selesai; tautan Detail Logbook/Jadwal/Batch mempertahankan identitas catatan.
-- **Nutrisi dan keuangan:** ilustrasi siklus diberi label konsep; catatan transfer aktual ditampilkan terpisah. Finance menampilkan pemasukan, pengeluaran dan arus kas bersih hanya untuk role berwenang, dengan error tersendiri bila gagal.
+UI, layanan dan Rules membatasi finance. Perubahan role/kehilangan akses membuang cache halaman, draft, detail dan dialog sesi sebelumnya. Pembaruan profil biasa mempertahankan draft. Penjualan baru dibatasi Admin aktif.
 
-Data diambil melalui refresh manual, dengan waktu pembaruan terakhir. Tidak ada klaim LIVE. Detail rumus, batas pembacaan, hasil QA, serta deployment Rules/index manual tersedia di [Phase 05](docs/PHASE_05_DASHBOARD_MONITORING.md). Kebijakan untuk semua phase berikutnya dan audit dependency ada di [Dependency Health](docs/DEPENDENCY_HEALTH.md).
+## Dashboard dan monitoring
 
-## Alur Logbook
+KPI operasional, lima modul, timeline, stok rendah, batch dan arus kas sesuai role. Filter hari ini, 7/30/90 hari dan rentang khusus sampai 366 hari kalender lokal. Grafik memakai tanggal pengamatan nyata, unit terpisah dan tooltip; jeda tetap kosong. Batang padat dapat digeser. Estimasi berbeda dari produksi aktual; saldo stok berbeda dari panen. Refresh menampilkan waktu pembaruan dan batas cakupan.
 
-**Form ? Simpan Catatan ? Lihat Catatan ? Detail**, atau buka **Daftar Logbook** dari form. Filter awal mengikuti modul yang sedang digunakan. Input tetap terlihat setelah simpan; tombol simpan nonaktif sampai isian diubah. Kegagalan simpan mempertahankan input dan ID permintaan untuk retry.
+## Logbook
 
-Pencarian judul/catatan memakai debounce 350 ms dan hanya mencakup halaman yang sudah dimuat. Gunakan **Muat berikutnya** untuk memperluas cakupan. Detail dapat dimuat ulang dari Cloud Firestore.
+Lima form, validasi numerik, batch opsional, simpan/retry dengan identitas permintaan, daftar/detail, filter dan pagination. Pencarian mencakup halaman termuat. Edit catatan tambahan memiliki audit. Koreksi kuantitas/pembatalan sumber melalui Admin memeriksa stok, produksi dan dependensi.
 
-Perubahan catatan tambahan tidak mengubah stok atau hasil produksi. Pembatalan/penghapusan serta koreksi kuantitas memerlukan mekanisme koreksi terintegrasi dan belum tersedia. Rules Phase 02 harus diterapkan oleh pengelola sebelum menggunakan edit dengan audit trail; pekerjaan ini tidak melakukan deployment produksi. Lihat [dokumentasi Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md) untuk batas mapping dan keamanan data.
+## Batch
 
-## Manajemen Batch Budidaya
+Kode unik, siklus **direncanakan → aktif → selesai → arsip**, detail, riwayat dan tautan Logbook. Operator memakai batch aktif untuk catatan baru. Batch selesai/arsip menjadi baca-saja bagi operator; Admin tetap memeriksa dependensi.
 
-Batch adalah identitas kelompok atau siklus untuk **Ayam, Maggot BSF, Cacing Tanah, Tanaman, dan Lele**. Modul dan form Logbook original tetap digunakan; tidak ada menu utama tambahan.
+## Inventaris dan jadwal
 
-1. Buka **Logbook > Kelola Batch > Tambah Batch**. Isi modul, nama, kode unik, lokasi dan tanggal mulai. Jumlah awal beserta unit, komoditas, estimasi panen dan catatan bersifat opsional.
-2. Batch baru **Direncanakan**. Buka Detail Batch dan pilih **Ubah ke Aktif** untuk mulai mencatat aktivitas.
-3. Pada form Logbook modul terkait, tekan **Pilih batch ... yang aktif**, pilih batch secara eksplisit, lalu **Simpan Catatan**. **Tanpa Batch** tersedia untuk aktivitas umum lintas siklus. Catatan lama berlabel **Belum terhubung ke batch**; aplikasi tidak menebak relasi.
-4. Buka Detail Batch untuk identitas, metadata audit, ringkasan aktivitas pada halaman yang dimuat, dan **Aktivitas Batch > Lihat Detail Logbook**. Filter modul/status, pencarian nama/kode pada data termuat, urutan dan pagination tersedia di daftar batch.
-5. Siklus: **Direncanakan > Aktif > Selesai > Diarsipkan**. Selesai/arsip tetap memiliki riwayat dan tidak menerima catatan baru. Perubahan status tidak membuat panen atau mengubah stok.
+Master, saldo awal, stok masuk/keluar, koreksi fisik dan ledger dengan unit serta sumber. Ledger tanpa master tidak menciptakan saldo. Alur rekonsiliasi stok lama dipensiunkan.
 
-Admin dan operator lapangan aktif dapat mengelola batch; operator keuangan serta mitra/peserta edukasi hanya membaca. Role lama `operator` tetap mengikuti operator lapangan. Kode, modul, tanggal mulai dan data awal tidak dapat diubah setelah dibuat. Kode unik secara global memakai ID dokumen deterministik dan tidak digunakan ulang.
+Jadwal memiliki pending/done/skipped, checklist dan pengingat lokal. Sinkronisasi maksimal 50 jadwal pending dalam 14 hari. Edit mengganti pengingat; selesai/dilewati/hapus membatalkannya. Penolakan izin tidak membatalkan simpan. Waktu pengiriman mengikuti Android/OEM; recurrence otomatis belum tersedia.
 
-Rules dan sembilan index tambahan Phase 03 perlu ditinjau dan diterapkan secara manual oleh pengelola sebelum fitur digunakan pada lingkungan tujuan. Tidak ada deployment otomatis. Lihat [Phase 03](docs/PHASE_03_BATCH_MANAGEMENT.md) untuk kontrak transaksi, hasil pengujian dan batas verifikasi.
+## Keuangan dan penjualan
 
-## Manajemen Inventaris
+Pemasukan/pengeluaran manual, filter, audit dan **arus kas bersih**, bukan laba akuntansi. Penjualan menyimpan receipt, potongan stok, ledger dan pemasukan secara atomik. Quantity maksimal tiga desimal, harga/total integer Rupiah dengan pembulatan half-up. Pembatalan melalui worker membalik pasangan sumber; pemasukan sale tidak diubah terpisah.
 
-Buka **Lainnya > Inventaris** untuk mencari barang, memfilter modul/kategori, melihat stok aman/rendah/habis, dan mengurutkan data yang sudah dimuat. Daftar dibaca per 20 barang; indikator stok barang yang dimuat mengikuti pembaruan data. Pencarian, status stok, dan urutan tambahan hanya mencakup data yang dimuat, bukan total seluruh persediaan.
+Ringkasan dibatasi 500 transaksi; laporan maksimal 1.000 dokumen per sumber. Jika melebihi batas, persempit periode/filter. PDF/Excel mengikuti izin finance, menjaga unit dan memisahkan penjualan dari pemasukan agar tidak dihitung dua kali.
 
-- **Tambah Barang** mengisi identitas, lokasi, satuan, minimum stok, dan Stok Awal opsional. Saldo awal dan historinya disimpan bersama.
-- **Edit Master** mengubah nama, kategori, lokasi, dan batas minimum tanpa mengubah saldo. Item key, modul, dan satuan dipertahankan setelah pembuatan agar histori tetap konsisten.
-- **Mutasi Stok** menyediakan Stok Masuk, Stok Keluar, serta Koreksi Stok berdasarkan jumlah fisik aktual. Catatan/alasan wajib; stok minus membutuhkan persetujuan eksplisit. Kegagalan simpan mempertahankan isian dan ID permintaan untuk retry.
-- **Riwayat Mutasi** menampilkan sebelum/sesudah, kuantitas, sumber, waktu, pengguna, serta relasi batch/Logbook dengan pagination. Histori juga dapat dibuka dari Detail Logbook dan Detail Batch.
-- Pemakaian/produksi yang sudah disimpan melalui **Logbook** tidak perlu dicatat ulang sebagai mutasi manual. Stok merupakan persediaan lokasi; batch hanya atribusi kegiatan, bukan saldo fisik terpisah.
+## Aliran nutrisi aktual
 
-Peringatan stok rendah memakai ID notifikasi tetap dan tidak membuka ulang informasi identik yang sudah dibaca. Stok habis dibedakan dari stok rendah; pesan notifikasi menjelaskan kondisi saat pemeriksaan dan mengarahkan pengguna ke Inventaris untuk kondisi terbaru. Penghapusan master hanya tersedia bagi admin ketika stok nol; histori tetap disimpan.
+Material, jumlah/satuan, sumber/tujuan, tanggal, batch dan referensi kegiatan. Tidak otomatis mengubah stok. Ilustrasi Dashboard bukan transaksi. Data lama tanpa provenance diberi penjelasan ketidakpastian.
 
-## Jadwal Operasional
+## Edukasi
 
-Buka **Lainnya > Jadwal**, atau **Detail Batch > Jadwal Batch**. Buat kegiatan per modul, pilih batch aktif yang sesuai secara eksplisit, atau gunakan **Tanpa Batch — Aktivitas Umum**. Isi jenis aktivitas, waktu perangkat, dan catatan. Daftar memiliki tampilan **Hari Ini, Mendatang, Terlewat, Selesai, Semua Jadwal**, filter modul/tanggal, serta pagination.
+Artikel, langkah SOP dan video HTTPS eksternal memiliki halaman detail. Admin menambah, mengedit, mengubah draft/terbit/arsip dan menghapus lunak dengan bukti edit atomik. Pembaca hanya melihat konten terbit. Filter modul/tipe/status, pencarian halaman termuat, fallback gambar dan pemuatan berikutnya tersedia. Tidak ada upload Firebase Storage.
 
-**Tandai Selesai** dan **Lewati** merupakan keputusan petugas dan menyimpan pengguna serta waktu pelaksanaan. Jadwal selesai/dilewati menjadi histori; pembukaan form atau munculnya pengingat tidak menyelesaikan kegiatan. **Catat di Logbook** membuka modul dan konteks batch yang masih aktif, menampilkan kegiatan yang dirujuk, dan tetap meminta pengamatan serta Simpan Catatan dari pengguna. Aksi ini tidak membuat catatan otomatis atau mengurangi stok.
+Form mempertahankan input saat simpan gagal, mencegah klik ganda dan mempertahankan metadata saat edit. Form Edukasi biasa memakai transaksi Firestore yang diaudit. Kategori Edukasi pada panel Admin generik tetap membutuhkan worker.
 
-Pengingat lokal disinkronkan saat login, aplikasi kembali aktif, sesudah perubahan jadwal, atau lewat **Sinkronkan Pengingat**. Perubahan waktu mengganti pengingat; selesai/dilewati/hapus membatalkannya. Izin perangkat yang ditolak tidak membatalkan penyimpanan jadwal. Pesan hasil penyimpanan dan hasil pengingat ditampilkan terpisah agar retry pengingat tidak membuat jadwal kedua.
+## Notifikasi
 
-Sinkronisasi dibatasi maksimal 50 jadwal pending dalam 14 hari. Android memakai pengingat waktu perkiraan sesuai kebijakan perangkat. Tidak ada penjadwal push server atau jadwal berulang otomatis; recurrence belum diaktifkan. Admin/operator lapangan aktif dapat mengelola, sedangkan operator keuangan dan role pembaca hanya melihat. Rules dan index Phase 04 harus ditinjau serta diterapkan manual sebelum fitur digunakan pada project tujuan. Lihat [Phase 04](docs/PHASE_04_INVENTORY_SCHEDULE.md) untuk kontrak, pengujian, dan batasannya.
+Inbox Firestore, filter, baca/belum baca, retry dan tautan sumber. Broadcast memakai receipt khusus penerima; generasi baru kembali belum dibaca. Pengingat lokal terpisah dari inbox. FCM mencakup permission/token client; penjadwal push server belum tersedia.
 
-## Instalasi dan konfigurasi
+## Rekomendasi operasional
 
-Prasyarat: Flutter stable, Dart sesuai `pubspec.yaml`, project Firebase, dan perangkat/emulator. Versi pengujian Phase 01: Flutter 3.44.2, Dart 3.12.2.
+Aturan untuk lima modul berdasarkan sumber aktual, dengan penjelasan data kurang dan sumber perhitungan. Tidak mengarang skor/panen. Rekomendasi finance mengikuti role; perubahan izin membuang cache sebelumnya.
+
+## Pengelolaan data Admin
+
+Panel mencakup **17 kategori bisnis**, termasuk jalur legacy. Preview, alasan, konfirmasi, hash keadaan, dependensi terbaru, receipt, audit dan backup melindungi koreksi/pembatalan/penghapusan. Identitas Auth memakai job terpisah dan UID tepat. Admin terakhir yang efektif dilindungi termasuk flag `is_active` lama.
+
+**Full CRUD produksi belum diterima end-to-end:** host worker, IAM, monitoring dan UAT pemilik masih perlu diverifikasi. Bukti stok/sumber hilang, lebih dari 500 dokumen per root atau dependensi berbahaya membuat operasi ditolak. Tidak semua dokumen aman dihapus sembarang. Lihat [matriks keamanan dan kemampuan](docs/PHASE_08_SECURITY_AUDIT.md).
+
+## Teknologi
+
+| Lapisan | Baseline |
+| --- | --- |
+| Flutter / Dart | 3.44.2 / 3.12.2; lockfile mensyaratkan Flutter ≥3.44 dan Dart ≥3.12 |
+| Data | Firebase Core, Authentication, Cloud Firestore, Messaging client |
+| Grafik / pengingat | fl_chart, flutter_local_notifications, timezone |
+| Ekspor | pdf, printing, excel, share_plus, path_provider |
+| Worker | Node ≥22, firebase-admin 14.5.0, lockfile terpisah |
+| Android | AGP 8.11.1, Gradle 8.14, Kotlin 2.2.20; bytecode Java 17 |
+
+[Dependency Health](docs/DEPENDENCY_HEALTH.md) mencatat risiko maintenance `excel`, constraints `archive`/`image` dan transitif npm. Versi lebih baru tidak otomatis berarti deprecated. Tidak ada upgrade dependency massal.
+
+## Arsitektur
+
+```text
+lib/app/                 Shell dan navigasi role
+lib/core/                Komponen, validasi dan layanan bersama
+lib/features/            Screen, model dan layanan per fitur
+lib/theme/               Warna dan token desain
+backend/admin/           Worker tepercaya dan identity outbox
+test/                    Tes Flutter dengan fixture lokal
+tools/firestore_tests/   Kontrak Rules di emulator
+docs/                    Schema, audit, rollout dan handoff
+```
+
+## Konfigurasi Firebase
+
+Project `seicycle-kebun-sei`, database `(default)` di `asia-southeast2`, package `id.seicycle.app`. Konfigurasi lokal `android/app/google-services.json` diabaikan Git. `lib/firebase_options.dart` dikonfigurasi hanya untuk Android; platform lain belum dinyatakan didukung.
+
+Aktifkan email/password, gunakan konfigurasi FlutterFire yang berwenang dan jangan menaruh credential Admin pada client. Baca [schema](docs/FIRESTORE_SCHEMA.md), [Rules](firestore.rules), [indexes](firestore.indexes.json) dan [rollout](docs/PHASE_08_FIREBASE_DEPLOYMENT.md). Snapshot baca-saja Phase 08 menemukan Rules cocok dengan sumber serta **96 composite indexes READY**. Ulangi sebelum rollout; audit ini tidak men-deploy atau memutasi produksi.
+
+## Menyiapkan worker Admin
+
+```bash
+npm ci --prefix backend/admin
+```
+
+Host tepercaya memerlukan Node ≥22, managed Application Default Credentials, project tepat, `SEICYCLE_ADMIN_WORKER_ENABLED=true`, supervisor/restart, monitoring dan pemilik recovery. Jalankan `node backend/admin/worker.mjs` setelah host/IAM/biaya disetujui. Firebase CLI login bukan otomatis ADC. Worker tidak berjalan di client.
+
+## Pengembangan lokal
 
 ```bash
 git clone https://github.com/Freddy47588/sei_cycle.git
 cd sei_cycle
 git switch feature/operational-v2
 flutter pub get
-```
-
-1. Daftarkan aplikasi Android dengan package `id.seicycle.app` pada project Firebase.
-2. Simpan konfigurasi lokal di `android/app/google-services.json` (diabaikan Git).
-3. Aktifkan Authentication email/password dan Google; daftarkan SHA-1/SHA-256 untuk Google Sign-In Android.
-4. Siapkan database Cloud Firestore, rules dan indexes sesuai lingkungan. Baca [backend](docs/BACKEND.md), [schema](docs/FIRESTORE_SCHEMA.md), serta [indexes](docs/FIRESTORE_INDEXES.md) sebelum deployment.
-5. Konfigurasi FlutterFire untuk platform yang akan digunakan:
-
-```bash
-dart pub global activate flutterfire_cli
-flutterfire configure
+flutter analyze
 flutter run
 ```
 
-`lib/firebase_options.dart` saat ini hanya mendukung Android. Web, iOS, macOS, Windows, dan Linux memerlukan konfigurasi tambahan. Aplikasi tidak menggunakan backend Express, Firebase Admin SDK, atau Firebase Storage. Jangan memakai credential milik orang lain.
+Siapkan Flutter/Android SDK, Java kompatibel dan konfigurasi Firebase lokal. Penuhi lisensi yang diperlukan melalui `flutter doctor --android-licenses` setelah membacanya. Pengujian mutasi memakai emulator dengan project `demo-`.
 
-## Validasi
+## Build Android debug
 
 ```bash
+flutter build apk --debug
+```
+
+`build/app/outputs/flutter-apk/app-debug.apk` adalah build pengujian lokal. Identitas/versi aktual ada di [laporan Android](docs/PHASE_08_ANDROID_RELEASE.md).
+
+## Build Android release aman
+
+Copy `android/key.properties.example` menjadi `android/key.properties` yang diabaikan Git, isi lokal; atau gunakan `SEICYCLE_STORE_FILE`, `SEICYCLE_STORE_PASSWORD`, `SEICYCLE_KEY_ALIAS`, `SEICYCLE_KEY_PASSWORD` dari penyimpanan rahasia. Path relatif dihitung dari `android/`. Jangan menaruh password dalam argumen/log.
+
+```bash
+flutter clean
+flutter pub get
 flutter analyze
-flutter test
+flutter test --reporter expanded
+flutter build apk --release
+```
+
+Tidak ada fallback debug key. Kredensial tidak lengkap, key debug dan sertifikat invalid ditolak. Output yang diharapkan `build/app/outputs/flutter-apk/app-release.apk` harus diverifikasi checksum, identitas dan sertifikatnya. [Panduan release](docs/PHASE_08_ANDROID_RELEASE.md) mencatat hasil aktual dan backup key. APK bukan otomatis rilis produksi.
+
+## Pengujian
+
+```bash
+flutter pub outdated
+flutter analyze
+flutter test --reporter expanded
+npm ci --prefix tools/firestore_tests
+npm ci --prefix backend/admin
+firebase emulators:exec --only firestore,auth --project demo-seicycle-admin07 --config firebase.phase07.json "npm --prefix backend/admin test"
+firebase emulators:exec --only firestore --project demo-seicycle-admin07 --config firebase.phase07.json "node --test tools/firestore_tests/logbook_rules.test.mjs tools/firestore_tests/phase07_rules.test.mjs tools/firestore_tests/phase08_education_rules.test.mjs"
+node --test tools/inventory_reconciliation.test.cjs
+python -m unittest discover -s tools -p "test_*.py" -v
 git diff --check
 ```
 
-Widget tests memakai loader, streams, dan service mock tanpa mengakses Firebase. Untuk menghasilkan PNG di `build/phase01/`:
+Emulator memerlukan Java/Node/Firebase CLI kompatibel dan loopback. Tool rekonsiliasi offline tidak mengaktifkan kembali UI lama. [Laporan tes](docs/PHASE_08_TEST_REPORT.md) memisahkan otomatis, emulator, perangkat dan yang belum diuji.
 
-```bash
-flutter test test/phase01_ui_test.dart --dart-define=CAPTURE_UI=true
-```
+## Persyaratan deployment
 
-Opsional: set environment variable `FLUTTER_ROOT` ke direktori Flutter SDK agar PNG memakai font Roboto dari cache SDK. PNG adalah render widget dengan data uji lokal, bukan bukti koneksi produksi.
+Tinjau kompatibilitas client, Rules/indexes aktual, backup teruji, host/IAM, monitoring, signing dan UAT. Deployment Firebase serta billing memerlukan persetujuan pemilik. [Deployment](docs/PHASE_08_FIREBASE_DEPLOYMENT.md) memuat urutan, smoke test dan rollback.
 
-[Audit Phase 01](docs/PHASE_01_UI_AUDIT.md) mencatat baseline, perbandingan desain, pengujian, dan batas verifikasi. Referensi asli tersedia di folder `screenshots/` pada branch `main`.
+## Batasan yang diketahui
 
-Uji rules dan kontrak transaksi dengan Firestore Emulator (Node.js ?20, Java ?21, Firebase CLI):
+- Android merupakan platform terkonfigurasi; file platform lain bukan bukti dukungan runtime.
+- Worker produksi belum diterima; panel yang membutuhkannya dapat tertahan saat worker offline.
+- Query, pencarian, graph dan ekspor memiliki batas eksplisit.
+- Ledger tanpa master/provenance tidak jelas bukan saldo fisik terverifikasi. UAT 24 Oktober menemukan Rekomendasi tertahan oleh guard referensi historis; penerimaannya menunggu peninjauan sumber/backup yang sah.
+- FCM server, recurrence, upload media dan jaminan pengingat tepat waktu belum tersedia.
+- Semua role, perilaku OEM dan backup key tetap mengikuti penerimaan aktual.
 
-```bash
-npm ci --prefix tools/firestore_tests
-firebase emulators:exec --only firestore --project demo-seicycle-phase02 --config firebase.phase02.json "npm --prefix tools/firestore_tests test"
-```
+## Tangkapan layar
 
-Gunakan project demo tersebut; konfigurasi pengujian terpisah dari produksi. Untuk PNG daftar/detail: `flutter test test/phase02_visual_test.dart --dart-define=CAPTURE_UI=true` (hasil di `build/phase02/`).
+Logo diperbesar pada ikon launcher, header, login dan Dashboard dengan mempertahankan gambar aslinya. Ikon adaptif menjaga logo di area aman agar tidak terpotong.
 
-## Struktur dan dokumentasi
+<img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Ikon launcher SeiCycle" width="96" />
+<img src="docs/images/phase08-login-320.png" alt="Layar login aktual, render widget QA 320 px" width="240" />
 
-```text
-lib/app/             Shell dan navigasi
-lib/core/            Komponen, utilitas, layanan bersama
-lib/features/        Modul aplikasi dan layanan Firestore
-lib/theme/           Palet dan token desain
-test/                Pengujian model, layanan, dan widget
-docs/                Dokumentasi implementasi
-```
+Gambar login adalah render layar implementasi dengan fixture lokal tanpa kredensial; bukan bukti login produksi. Screenshot prototipe pada `main` mengandung statistik contoh dan tidak menjadi bukti produksi. Render dan hasil perangkat dijelaskan di [laporan tes](docs/PHASE_08_TEST_REPORT.md). Screenshot berisi data bisnis/personal disimpan privat.
 
-- [Logbook Management Phase 02](docs/PHASE_02_LOGBOOK_MANAGEMENT.md)
-- [Inventaris & Jadwal Phase 04](docs/PHASE_04_INVENTORY_SCHEDULE.md)
-- [Arsitektur backend](docs/BACKEND.md)
-- [Schema Cloud Firestore](docs/FIRESTORE_SCHEMA.md)
-- [ERD](docs/ERD.md)
-- [Firestore Rules](docs/FIRESTORE_RULES.md)
-- [Data sampel manual](docs/SAMPLE_DATA.md)
+## Status proyek
 
-Jangan memasukkan service account, private key, `.env`, atau token pribadi ke repository. Video memakai tautan eksternal. Firebase Storage, pembaca detail edukasi lengkap, pengiriman FCM server, serta hardening produksi lanjutan belum dinyatakan selesai.
+Phase 01–07 diimplementasikan; Phase 08 memvalidasi regresi, perbaikan, signing dan penerimaan. **Produksi tetap bersyarat pada gate tercatat**, terutama worker dan UAT. Rujukan: [audit](docs/PHASE_08_FINAL_AUDIT.md), [release notes](docs/PHASE_08_RELEASE_NOTES.md), [UAT](docs/PHASE_08_UAT_CHECKLIST.md), [handoff](docs/PHASE_08_FINAL_HANDOFF.md).
+
+## Kredit dan repository
+
+Kebun Sei — Institut Teknologi dan Bisnis Asia Malang, Program P2MW 2025. Branding/rancangan awal SeiCycle dipertahankan. Pengembangan dan PR fase ini pada [Freddy47588/sei_cycle](https://github.com/Freddy47588/sei_cycle), dari `feature/operational-v2` ke `main` pada repository tersebut. Tidak push langsung ke `main` atau auto-merge PR.

@@ -47,3 +47,7 @@ Use the [deployment sequence and rollback procedure](PHASE_08_FIREBASE_DEPLOYMEN
 All safe local engineering and evidence gathering are carried through to the recorded artifacts and owner-reviewable PR. Open external gates are explicitly BLOCKED; their presence prevents marking Phase 08 fully production-complete. A passing build/test suite does not substitute for deployed worker ownership, signed device acceptance or owner release approval.
 
 Final automated results: **503 Flutter, 175 Rules, 36 Admin, 15 offline Node and 11 Python tests passed**, with clean analyzer. Signed APK SHA-256 `b7f879d536c808e882370c68398a1c21d07bdd2fe906c97e3c2da02b59fc57e5`, 70,783,903 bytes, 1.0.1+2; approved installation and authenticated read/navigation smoke completed. Full production acceptance remains blocked by worker ownership/runtime, Recommendations integrity, remaining role/native UAT and portable key backup.
+
+## Recorded GitHub delivery
+
+Implementation `924cdea403c3253eb34118ecbeb2cb9b3a919825` and QA/README documentation `374afc7aee359b7ed7a185f2eb1d750d6e32e7e7` were successfully pushed to `origin/feature/operational-v2`; remote head equality was verified. [Draft PR #1](https://github.com/Freddy47588/sei_cycle/pull/1) was opened against **Freddy47588/sei_cycle:main**, with release blockers at the start of its description. It remains open/draft and unmerged. This documentation follow-up adds the verified PR outcome without changing tested application code or APK contents. The final delivery message records the final documentation commit hash.

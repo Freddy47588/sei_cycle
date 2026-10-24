@@ -39,6 +39,8 @@ const clean = value => value instanceof Timestamp ? { seconds: value.seconds, na
 export const digest = value => createHash('sha256').update(JSON.stringify(clean(value))).digest('hex');
 const adminRole = d => typeof d?.role === 'string' && d.role.trim().toLowerCase() === 'admin';
 const active = d => d.isDeleted !== true && d.is_deleted !== true && !d.adminReversed;
+// Last-Admin protection must count only profiles that can actually authorize work.
+const activeAdmin = d => !!d && adminRole(d) && d.isActive !== false && d.is_active !== false && active(d);
 const fail = message => { throw new Error(message); };
 function validPath(path) {
   if (typeof path !== 'string' || !/^[a-z_]+\/[A-Za-z0-9_-]{1,128}$/.test(path) || !categories.includes(path.split('/')[0])) fail('Jalur dokumen tidak valid.');
@@ -214,9 +216,8 @@ export function planChange(records, request) {
   }
   if (category === 'users') {
     const next = writes[targetPath];
-    const removesAdmin = adminRole(old) && old.isActive !== false &&
-      (!next || !adminRole(next) || next.isActive === false || next.isDeleted === true);
-    if (removesAdmin && !Object.entries(records).some(([p, d]) => p.startsWith('users/') && p !== targetPath && adminRole(d) && d.isActive !== false && active(d))) fail('Admin aktif terakhir harus dipertahankan.');
+    const removesAdmin = activeAdmin(old) && !activeAdmin(next);
+    if (removesAdmin && !Object.entries(records).some(([p, d]) => p.startsWith('users/') && p !== targetPath && activeAdmin(d))) fail('Admin aktif terakhir harus dipertahankan.');
     if (['delete', 'deleteIdentity'].includes(operation) && old.isActive !== false) fail('Nonaktifkan profil terlebih dahulu.');
     if (operation === 'update' && 'email' in patch) fail('Perubahan email identitas harus melalui Firebase Auth terverifikasi, bukan metadata profil.');
     if (operation === 'create' && (typeof patch.email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(patch.email))) fail('Email akun wajib valid.');
@@ -237,7 +238,7 @@ async function readState(db, tx) {
 }
 function authorize(records, uid) {
   const profile = records[`users/${uid}`];
-  if (!profile || !adminRole(profile) || profile.isActive === false || profile.is_active === false || !active(profile)) fail('Hanya Admin aktif yang berwenang.');
+  if (!activeAdmin(profile)) fail('Hanya Admin aktif yang berwenang.');
 }
 
 /** Request documents are untrusted. Revalidate identity, state, plan and preview at execution. */

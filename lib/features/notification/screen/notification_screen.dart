@@ -16,9 +16,11 @@ class NotificationScreen extends StatefulWidget {
   const NotificationScreen({
     required this.profile,
     this.notifications,
+    this.notificationService,
     super.key,
   });
   final Stream<List<AppNotification>>? notifications;
+  final NotificationService? notificationService;
 
   final AppUser profile;
 
@@ -27,16 +29,32 @@ class NotificationScreen extends StatefulWidget {
 }
 
 class _NotificationScreenState extends State<NotificationScreen> {
-  late final NotificationService _service = NotificationService();
+  late NotificationService _service =
+      widget.notificationService ?? NotificationService();
   String? _type;
   bool _unreadOnly = false;
   Stream<List<AppNotification>>? _stream;
   String? _streamType;
   bool _busy = false;
 
+  (String, String, bool) get _sessionIdentity => (
+    widget.profile.uid,
+    widget.profile.effectiveRole,
+    widget.profile.isActive,
+  );
+
   @override
-  void initState() {
-    super.initState();
+  void didUpdateWidget(covariant NotificationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profile.uid != widget.profile.uid ||
+        oldWidget.profile.effectiveRole != widget.profile.effectiveRole ||
+        oldWidget.profile.isActive != widget.profile.isActive ||
+        oldWidget.notificationService != widget.notificationService) {
+      _stream = null;
+      if (oldWidget.notificationService != widget.notificationService) {
+        _service = widget.notificationService ?? NotificationService();
+      }
+    }
   }
 
   Future<void> _markAsRead(AppNotification notification) async {
@@ -67,6 +85,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   Stream<List<AppNotification>> _notifications() {
+    if (!widget.profile.isActive) {
+      return _stream ??= Stream.value(const <AppNotification>[]);
+    }
     if (widget.notifications != null) return widget.notifications!;
     if (_stream == null || _streamType != _type) {
       _streamType = _type;
@@ -112,7 +133,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           onSelected: (v) => setState(() => _unreadOnly = v),
         ),
         OutlinedButton.icon(
-          onPressed: _busy ? null : _markAllAsRead,
+          onPressed: _busy || !widget.profile.isActive ? null : _markAllAsRead,
           icon: const Icon(Icons.done_all_rounded),
           label: const Text('Tandai semua'),
         ),
@@ -141,6 +162,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           const SizedBox(height: 14),
           Expanded(
             child: StreamBuilder<List<AppNotification>>(
+              key: ValueKey((_sessionIdentity, widget.notifications)),
               stream: _notifications(),
               builder: (context, snapshot) {
                 final state = asyncSnapshotState(snapshot);

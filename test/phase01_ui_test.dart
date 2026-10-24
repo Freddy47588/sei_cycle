@@ -75,7 +75,7 @@ void main() {
     },
   );
 
-  for (final width in [320.0, 600.0, 768.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 600.0, 768.0, 1280.0]) {
     for (final role in ['admin', 'operator_lapangan', 'operator_keuangan']) {
       testWidgets(
         'navigation $role at $width retains allowed destinations and badge',
@@ -356,7 +356,7 @@ void main() {
     semantics.dispose();
   });
 
-  for (final width in [320.0, 600.0, 768.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 600.0, 768.0, 1280.0]) {
     testWidgets('main pages fit $width and produce review captures', (
       tester,
     ) async {

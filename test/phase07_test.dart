@@ -416,7 +416,7 @@ void main() {
       throwsArgumentError,
     );
   });
-  for (final width in [320.0, 360.0, 768.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     testWidgets(
       'education reader at $width preserves publication visibility and no overflow',
       (tester) async {

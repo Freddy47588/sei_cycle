@@ -19,6 +19,7 @@ import '../features/recommendations/screen/recommendation_screen.dart';
 import '../features/reports/screens/report_screen.dart';
 import '../features/schedule/screen/schedule_screen.dart';
 import '../theme/app_theme.dart';
+import '../core/widgets/kebun_sei_logo.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -43,7 +44,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _logbookVisited = false;
   Widget? _injectedDraftPage;
   GlobalKey _draftKey = GlobalKey();
-  late final Stream<int> _unreadCountStream;
+  late Stream<int> _unreadCountStream;
+
+  (String, String, bool) get _sessionIdentity => (
+    widget.profile.uid,
+    widget.profile.effectiveRole,
+    widget.profile.isActive,
+  );
+
+  void _watchUnreadCount() {
+    _unreadCountStream = !widget.profile.isActive
+        ? Stream<int>.value(0)
+        : widget.unreadCountStream ??
+              NotificationService().watchUnreadCount(
+                userId: widget.profile.uid,
+                role: widget.profile.effectiveRole,
+              );
+  }
 
   @override
   void initState() {
@@ -53,23 +70,33 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _reminderSync = ReminderSyncService();
       unawaited(_syncReminders());
     }
-    _unreadCountStream =
-        widget.unreadCountStream ??
-        NotificationService().watchUnreadCount(
-          userId: widget.profile.uid,
-          role: widget.profile.effectiveRole,
-        );
+    _watchUnreadCount();
   }
 
   @override
   void didUpdateWidget(covariant AppShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.profile.uid != widget.profile.uid ||
-        !widget.profile.isActive) {
+    final sessionChanged =
+        oldWidget.profile.uid != widget.profile.uid ||
+        oldWidget.profile.effectiveRole != widget.profile.effectiveRole ||
+        oldWidget.profile.isActive != widget.profile.isActive;
+    if (sessionChanged) {
       _draftKey = GlobalKey();
       _logbookVisited = false;
       _injectedDraftPage = null;
       _selectedIndex = 0;
+      unawaited(_reminderSync?.clear());
+      _reminderSync = null;
+      WidgetsBinding.instance.removeObserver(this);
+      if (widget.pageBuilder == null && widget.profile.isActive) {
+        WidgetsBinding.instance.addObserver(this);
+        _reminderSync = ReminderSyncService();
+        unawaited(_syncReminders());
+      }
+    }
+    if (sessionChanged ||
+        oldWidget.unreadCountStream != widget.unreadCountStream) {
+      _watchUnreadCount();
     }
   }
 
@@ -189,6 +216,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   ];
 
   void _select(int index) {
+    if (index < 0 || index >= _destinations.length) return;
     if (index == _selectedIndex) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
@@ -206,6 +234,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (_selectedIndex >= destinations.length) _selectedIndex = 0;
 
     return StreamBuilder<int>(
+      key: ValueKey(_sessionIdentity),
       stream: _unreadCountStream,
       initialData: 0,
       builder: (context, snapshot) {
@@ -214,6 +243,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           builder: (context, constraints) {
             final isLogbook = destinations[_selectedIndex].label == 'Logbook';
             final content = IndexedStack(
+              key: ValueKey(_sessionIdentity),
               index: isLogbook ? 0 : 1,
               children: [
                 TickerMode(
@@ -300,12 +330,12 @@ class _MobileShell extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 56,
+        toolbarHeight: 64,
         titleSpacing: 16,
         title: Row(
           children: [
-            const _BrandLogo(size: 34),
-            const SizedBox(width: 9),
+            const KebunSeiLogo(size: 46),
+            const SizedBox(width: 10),
             const Expanded(
               child: Text(
                 'SeiCycle',
@@ -509,13 +539,13 @@ class _DesktopShell extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      height: 76,
+                      height: 88,
                       padding: const EdgeInsets.symmetric(horizontal: 18),
                       color: AppColors.primaryGreen,
                       child: const Row(
                         children: [
-                          _BrandLogo(size: 44),
-                          SizedBox(width: 12),
+                          KebunSeiLogo(size: 56),
+                          SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -523,6 +553,8 @@ class _DesktopShell extends StatelessWidget {
                               children: [
                                 Text(
                                   'SeiCycle',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 18,
@@ -531,6 +563,8 @@ class _DesktopShell extends StatelessWidget {
                                 ),
                                 Text(
                                   'Operasional Kebun Sei',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: Colors.white70,
                                     fontSize: 10,
@@ -725,31 +759,6 @@ class _DesktopShell extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _BrandLogo extends StatelessWidget {
-  const _BrandLogo({required this.size});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      padding: const EdgeInsets.all(5),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-      ),
-      child: Image.asset(
-        'lib/assets/logo.png',
-        fit: BoxFit.contain,
-        errorBuilder: (_, _, _) =>
-            const Icon(Icons.eco_rounded, color: AppColors.primaryGreen),
       ),
     );
   }

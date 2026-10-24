@@ -14,9 +14,10 @@ import '../models/report_filter.dart';
 import '../services/report_service.dart';
 
 class ReportScreen extends StatefulWidget {
-  const ReportScreen({required this.profile, super.key});
+  const ReportScreen({required this.profile, this.service, super.key});
 
   final AppUser profile;
+  final ReportService? service;
 
   @override
   State<ReportScreen> createState() => _ReportScreenState();
@@ -30,13 +31,14 @@ class _ReportScreenState extends State<ReportScreen> {
   @override
   void initState() {
     super.initState();
-    _service = ReportService();
+    _service = widget.service ?? ReportService();
 
     // Default filter: last 30 days, full summary
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     _filter = ReportFilter(
-      startDate: now.subtract(const Duration(days: 30)),
-      endDate: now,
+      startDate: DateTime(today.year, today.month, today.day - 29),
+      endDate: today,
       reportType: widget.profile.canViewFinance
           ? ReportType.fullSummary
           : ReportType.operational,
@@ -134,6 +136,7 @@ class _ReportScreenState extends State<ReportScreen> {
             },
           ),
           DropdownButtonFormField<ReportType>(
+            isExpanded: true,
             initialValue: _filter.reportType,
             decoration: const InputDecoration(
               labelText: 'Jenis laporan',
@@ -148,7 +151,11 @@ class _ReportScreenState extends State<ReportScreen> {
               ))
                 DropdownMenuItem(
                   value: type,
-                  child: Text(_reportTypeLabel(type)),
+                  child: Text(
+                    _reportTypeLabel(type),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
             ],
             onChanged: (val) {
@@ -172,7 +179,7 @@ class _ReportScreenState extends State<ReportScreen> {
 
     final hasReportData =
         data.logbooks.isNotEmpty ||
-        data.lowStockItems.isNotEmpty ||
+        data.inventoryItems.isNotEmpty ||
         data.totalIncome > 0 ||
         data.totalExpense > 0 ||
         data.sales.isNotEmpty ||

@@ -16,15 +16,17 @@ class ProductivityChart extends StatelessWidget {
   final DashboardFilter filter;
   @override
   Widget build(BuildContext context) {
-    final points = series.points
-        .where(
-          (p) =>
-              p.value.isFinite &&
-              p.value >= 0 &&
-              p.value <= 1e15 &&
-              filter.contains(p.date),
-        )
-        .toList();
+    final points =
+        series.points
+            .where(
+              (p) =>
+                  p.value.isFinite &&
+                  p.value >= 0 &&
+                  p.value <= 1e15 &&
+                  filter.contains(p.date),
+            )
+            .toList()
+          ..sort((a, b) => a.date.compareTo(b.date));
     if (points.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(16),
@@ -42,12 +44,8 @@ class ProductivityChart extends StatelessWidget {
     final spots = points
         .map((p) => FlSpot(day(p.date).toDouble(), p.value))
         .toList();
-    final maxX = math.max(
-      1.0,
-      day(
-        DateTime(filter.end.year, filter.end.month, filter.end.day - 1),
-      ).toDouble(),
-    );
+    final minX = spots.first.x;
+    final maxX = math.max(minX + 1, spots.last.x);
     final maxY = math.max(
       1.0,
       points.map((p) => p.value).reduce(math.max) * 1.15,
@@ -61,53 +59,8 @@ class ProductivityChart extends StatelessWidget {
     );
     String valueLabel(double y) =>
         NumberFormat.compact(locale: 'id_ID').format(y);
-    final titles = FlTitlesData(
-      topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-      leftTitles: AxisTitles(
-        sideTitles: SideTitles(
-          showTitles: true,
-          reservedSize: 48,
-          interval: maxY / 4,
-          getTitlesWidget: (v, meta) =>
-              Text(valueLabel(v), style: const TextStyle(fontSize: 10)),
-        ),
-      ),
-      bottomTitles: AxisTitles(
-        sideTitles: SideTitles(
-          showTitles: true,
-          reservedSize: 32,
-          interval: math
-              .max(
-                1,
-                (maxX / (MediaQuery.sizeOf(context).width < 400 ? 2 : 3))
-                    .ceil(),
-              )
-              .toDouble(),
-          getTitlesWidget: (v, meta) {
-            if (v >
-                day(
-                  DateTime(
-                    filter.end.year,
-                    filter.end.month,
-                    filter.end.day - 1,
-                  ),
-                )) {
-              return const SizedBox.shrink();
-            }
-            return SideTitleWidget(
-              meta: meta,
-              space: 6,
-              fitInside: SideTitleFitInsideData.fromTitleMeta(
-                meta,
-                enabled: true,
-              ),
-              child: Text(dateLabel(v), style: const TextStyle(fontSize: 10)),
-            );
-          },
-        ),
-      ),
-    );
+    String tooltip(double x, double y) =>
+        '${dateLabel(x)}\n${NumberFormat.decimalPattern('id_ID').format(y)} ${series.unit}';
     const color = AppColors.primaryGreen;
     final segments = <List<FlSpot>>[];
     for (final spot in spots) {
@@ -116,6 +69,152 @@ class ProductivityChart extends StatelessWidget {
       }
       segments.last.add(spot);
     }
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    Widget chart(double width) {
+      // Bars occupy observed dates only. A long empty calendar must not squeeze
+      // a handful of real observations into subpixel rods.
+      final contentWidth = series.additive
+          ? math.max(width, points.length * 32.0 + 64 * scale)
+          : width;
+      final plotWidth = math.max(1.0, contentWidth - 64 * scale);
+      final labelWidth = 64 * scale;
+      final labelXs = <double>[];
+      final candidates = series.additive
+          ? List.generate(points.length, (i) => i.toDouble())
+          : spots.map((spot) => spot.x).toList();
+      final axisMin = series.additive ? 0.0 : minX;
+      final axisSpan = series.additive
+          ? math.max(1, points.length - 1).toDouble()
+          : maxX - minX;
+      for (final x in candidates) {
+        if (labelXs.isEmpty ||
+            (x - labelXs.last) / axisSpan * plotWidth >= labelWidth) {
+          labelXs.add(x);
+        }
+      }
+      final titles = FlTitlesData(
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(
+          sideTitles: SideTitles(showTitles: false),
+        ),
+        leftTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 48 * scale,
+            interval: maxY / 4,
+            getTitlesWidget: (v, meta) =>
+                Text(valueLabel(v), style: const TextStyle(fontSize: 10)),
+          ),
+        ),
+        bottomTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 24 * scale + 8,
+            interval: 1,
+            getTitlesWidget: (v, meta) {
+              if (!labelXs.any((x) => (x - v).abs() < 0.001)) {
+                return const SizedBox.shrink();
+              }
+              return SideTitleWidget(
+                meta: meta,
+                space: 6,
+                fitInside: SideTitleFitInsideData.fromTitleMeta(
+                  meta,
+                  enabled: true,
+                ),
+                child: Text(
+                  dateLabel(series.additive ? spots[v.round()].x : v),
+                  style: const TextStyle(fontSize: 10),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      final rendered = SizedBox(
+        width: contentWidth,
+        height: 220 + 24 * (scale - 1),
+        child: series.additive
+            ? BarChart(
+                BarChartData(
+                  maxY: maxY,
+                  minY: 0,
+                  titlesData: titles,
+                  borderData: FlBorderData(show: false),
+                  alignment: BarChartAlignment.spaceAround,
+                  gridData: const FlGridData(drawVerticalLine: false),
+                  barGroups: [
+                    for (var index = 0; index < spots.length; index++)
+                      BarChartGroupData(
+                        x: index,
+                        barRods: [
+                          BarChartRodData(
+                            toY: spots[index].y,
+                            color: color,
+                            width: 14,
+                          ),
+                        ],
+                      ),
+                  ],
+                  barTouchData: BarTouchData(
+                    touchTooltipData: BarTouchTooltipData(
+                      fitInsideHorizontally: true,
+                      fitInsideVertically: true,
+                      getTooltipItem: (group, index, rod, rodIndex) =>
+                          BarTooltipItem(
+                            tooltip(spots[group.x].x, rod.toY),
+                            const TextStyle(color: Colors.white),
+                          ),
+                    ),
+                  ),
+                ),
+                duration: Duration.zero,
+              )
+            : LineChart(
+                LineChartData(
+                  minX: axisMin,
+                  maxX: maxX,
+                  minY: 0,
+                  maxY: maxY,
+                  titlesData: titles,
+                  borderData: FlBorderData(show: false),
+                  gridData: const FlGridData(drawVerticalLine: false),
+                  lineBarsData: [
+                    for (final segment in segments)
+                      LineChartBarData(
+                        spots: segment,
+                        color: color,
+                        isCurved: false,
+                        barWidth: 2,
+                        dotData: const FlDotData(show: true),
+                      ),
+                  ],
+                  lineTouchData: LineTouchData(
+                    touchTooltipData: LineTouchTooltipData(
+                      fitInsideHorizontally: true,
+                      fitInsideVertically: true,
+                      getTooltipItems: (spots) => [
+                        for (final spot in spots)
+                          LineTooltipItem(
+                            tooltip(spot.x, spot.y),
+                            const TextStyle(color: Colors.white),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                duration: Duration.zero,
+              ),
+      );
+      if (contentWidth <= width) return rendered;
+      return Scrollbar(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: rendered,
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -128,83 +227,14 @@ class ProductivityChart extends StatelessWidget {
           '${filter.label} · ${points.length} hari dengan data',
           style: const TextStyle(color: AppColors.textMuted),
         ),
+        if (series.additive)
+          const Text(
+            'Batang berurutan menurut tanggal pengamatan. Geser untuk data padat.',
+            style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+          ),
         const SizedBox(height: 16),
-        SizedBox(
-          height: 220,
-          child: series.additive
-              ? BarChart(
-                  BarChartData(
-                    maxY: maxY,
-                    minY: 0,
-                    titlesData: titles,
-                    borderData: FlBorderData(show: false),
-                    alignment: BarChartAlignment.spaceAround,
-                    gridData: const FlGridData(drawVerticalLine: false),
-                    barGroups: [
-                      for (var day = 0; day <= maxX; day++)
-                        BarChartGroupData(
-                          x: day,
-                          barRods: [
-                            for (final spot in spots.where(
-                              (spot) => spot.x == day,
-                            ))
-                              BarChartRodData(
-                                toY: spot.y,
-                                color: color,
-                                width: math.min(16, 160 / (maxX + 1)),
-                              ),
-                          ],
-                        ),
-                    ],
-                    barTouchData: BarTouchData(
-                      touchTooltipData: BarTouchTooltipData(
-                        fitInsideHorizontally: true,
-                        fitInsideVertically: true,
-                        getTooltipItem: (group, index, rod, rodIndex) =>
-                            BarTooltipItem(
-                              '${dateLabel(group.x.toDouble())}\n${valueLabel(rod.toY)} ${series.unit}',
-                              const TextStyle(color: Colors.white),
-                            ),
-                      ),
-                    ),
-                  ),
-                  duration: Duration.zero,
-                )
-              : LineChart(
-                  LineChartData(
-                    minX: 0,
-                    maxX: maxX,
-                    minY: 0,
-                    maxY: maxY,
-                    titlesData: titles,
-                    borderData: FlBorderData(show: false),
-                    gridData: const FlGridData(drawVerticalLine: false),
-                    lineBarsData: [
-                      for (final segment in segments)
-                        LineChartBarData(
-                          spots: segment,
-                          color: color,
-                          isCurved: false,
-                          barWidth: 2,
-                          dotData: const FlDotData(show: true),
-                        ),
-                    ],
-                    lineTouchData: LineTouchData(
-                      touchTooltipData: LineTouchTooltipData(
-                        fitInsideHorizontally: true,
-                        fitInsideVertically: true,
-                        getTooltipItems: (spots) => [
-                          for (final spot in spots)
-                            LineTooltipItem(
-                              '${dateLabel(spot.x)}\n${valueLabel(spot.y)} ${series.unit}',
-                              const TextStyle(color: Colors.white),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  duration: Duration.zero,
-                ),
+        LayoutBuilder(
+          builder: (context, constraints) => chart(constraints.maxWidth),
         ),
         const SizedBox(height: 8),
         Wrap(

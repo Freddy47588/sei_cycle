@@ -61,6 +61,16 @@ test('physical master removal requires a verified zero; historical ledger remain
 test('last active Admin cannot be deactivated, including legacy role spellings', () => {
   for (const role of ['admin', 'Admin', ' admin ']) assert.throws(() => planChange({'users/a': {role, isActive: true}}, request('users/a', 'archive')), /terakhir/);
 });
+test('unavailable legacy Admin profiles cannot replace the last effective Admin', () => {
+  for (const unavailable of [{is_active: false}, {isActive: true, is_active: false}, {isActive: false}, {isDeleted: true}, {is_deleted: true}, {adminReversed: true}]) {
+    const records = {'users/admin': {role: 'admin', isActive: true}, 'users/other': {role: 'admin', ...unavailable}};
+    for (const [operation, patch] of [['archive', {}], ['softDelete', {}], ['update', {role: 'operator_lapangan'}], ['update', {isActive: false}]]) {
+      assert.throws(() => planChange(records, request('users/admin', operation, patch)), /terakhir/);
+    }
+  }
+  const records = {'users/admin': {role: 'admin', isActive: true}, 'users/other': {role: ' admin ', is_active: true}};
+  assert.equal(planChange(records, request('users/admin', 'archive')).writes['users/admin'].isActive, false);
+});
 test('circular flow correction does not create inventory movement', () => {
   const p = planChange({'circular_flows/f': {quantity: 2, unit: 'kg'}}, request('circular_flows/f', 'update', {quantity: 3}));
   assert.deepEqual(p.affected, ['circular_flows/f']);
@@ -114,6 +124,16 @@ test('emulator: forged, inactive and non-admin actor denied by processor', {skip
     assert.equal((await submit(uid, {...request('batches/b','delete'), actorUid: uid})).status, 'failed');
   }
   assert.equal((await submit('anonymous', {...request('batches/b','delete'), actorUid: ''})).status, 'failed');
+});
+test('emulator: legacy-disabled replacement cannot permit last-Admin deactivation', {skip: !emulator}, async () => {
+  await db.doc('users/other').set({role: 'admin', is_active: false});
+  const result = await submit('last_admin', request('users/admin', 'archive'));
+  assert.equal(result.status, 'failed');
+  assert.match(result.error, /terakhir/);
+  assert.equal((await db.doc('users/admin').get()).data().isActive, true);
+  assert.equal((await db.doc('admin_audit/last_admin_failed').get()).data().result, 'failed');
+  assert.equal((await db.doc('admin_backups/last_admin/documents/users__admin').get()).exists, false);
+  assert.equal((await submit('disabled_actor', {...request('batches/b', 'delete'), actorUid: 'other'})).status, 'failed');
 });
 test('emulator: sale cancellation retry changes stock and finance exactly once', {skip: !emulator}, async () => {
   for (const [path, d] of Object.entries(graph())) await db.doc(path).set(d);

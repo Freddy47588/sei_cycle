@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/widgets/app_ui.dart';
+import '../../../../core/widgets/kebun_sei_logo.dart';
 import '../../../../theme/app_theme.dart';
 
 class AuthFrame extends StatelessWidget {
@@ -56,9 +57,6 @@ class AuthFrame extends StatelessWidget {
                   child: Column(
                     children: [
                       Container(
-                        width: 76,
-                        height: 76,
-                        padding: const EdgeInsets.all(9),
                         decoration: const BoxDecoration(
                           color: Colors.white,
                           shape: BoxShape.circle,
@@ -70,15 +68,7 @@ class AuthFrame extends StatelessWidget {
                             ),
                           ],
                         ),
-                        child: Image.asset(
-                          'lib/assets/logo.png',
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, _, _) => const Icon(
-                            Icons.eco_rounded,
-                            color: AppColors.primaryGreen,
-                            size: 44,
-                          ),
-                        ),
+                        child: const KebunSeiLogo(size: 116),
                       ),
                       const SizedBox(height: 12),
                       const Text(
@@ -170,24 +160,7 @@ class _BrandPanel extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 88,
-                height: 88,
-                padding: const EdgeInsets.all(10),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Image.asset(
-                  'lib/assets/logo.png',
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, _, _) => const Icon(
-                    Icons.eco_rounded,
-                    color: AppColors.primaryGreen,
-                    size: 52,
-                  ),
-                ),
-              ),
+              const KebunSeiLogo(size: 132),
               const SizedBox(height: 24),
               const Text(
                 'SeiCycle',

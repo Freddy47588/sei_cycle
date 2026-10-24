@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/farm_modules.dart';
 import '../../../core/utils/delete_confirmation.dart';
@@ -13,8 +14,14 @@ import '../services/education_service.dart';
 import 'education_detail_screen.dart';
 
 class EducationScreen extends StatefulWidget {
-  const EducationScreen({required this.profile, this.contents, super.key});
+  const EducationScreen({
+    required this.profile,
+    this.contents,
+    this.educationService,
+    super.key,
+  });
   final Stream<List<EducationContent>>? contents;
+  final EducationService? educationService;
 
   final AppUser profile;
 
@@ -23,7 +30,8 @@ class EducationScreen extends StatefulWidget {
 }
 
 class _EducationScreenState extends State<EducationScreen> {
-  late final EducationService _service = EducationService();
+  late final EducationService _service =
+      widget.educationService ?? EducationService();
   String _query = '';
   String? _type;
   String? _moduleType;
@@ -31,6 +39,7 @@ class _EducationScreenState extends State<EducationScreen> {
   int _limit = 20;
   Stream<List<EducationContent>>? _cachedStream;
   String _streamKey = '';
+  final _deleting = <String>{};
 
   @override
   void initState() {
@@ -39,7 +48,8 @@ class _EducationScreenState extends State<EducationScreen> {
 
   Stream<List<EducationContent>> _contentsStream() {
     if (widget.contents != null) return widget.contents!;
-    final key = '${_type}_${_moduleType}_${_status}_$_limit';
+    final key =
+        '${widget.profile.uid}_${widget.profile.canManageEducation}_${_type}_${_moduleType}_${_status}_$_limit';
     if (_cachedStream == null || key != _streamKey) {
       _streamKey = key;
       _cachedStream = _service.watchContents(
@@ -54,42 +64,69 @@ class _EducationScreenState extends State<EducationScreen> {
   }
 
   Future<void> _openForm([EducationContent? content]) async {
-    final value = await showDialog<_EducationFormValue>(
+    if (!widget.profile.canManageEducation) return;
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _EducationFormDialog(content: content),
-    );
-    if (value == null || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.save(
-        id: content?.id,
-        expectedUpdatedAt: content?.updatedAt,
-        title: value.title,
-        type: value.type,
-        content: value.content,
-        externalUrl: value.externalUrl,
-        status: value.status,
-        moduleType: value.moduleType,
-        userId: widget.profile.uid,
+      barrierDismissible: false,
+      builder: (_) => _EducationFormDialog(
+        content: content,
+        onSave: (value, requestId) async {
+          if (!mounted || !widget.profile.canManageEducation) {
+            throw StateError('Hak akses pengelolaan edukasi telah berubah.');
+          }
+          await _service.save(
+            id: content?.id,
+            requestId: requestId,
+            expectedUpdatedAt: content?.updatedAt,
+            title: value.title,
+            type: value.type,
+            content: value.content,
+            externalUrl: value.externalUrl,
+            status: value.status,
+            moduleType: value.moduleType,
+            category: content?.category ?? '',
+            tags: content?.tags ?? const [],
+            toolsNeeded: content?.toolsNeeded ?? const [],
+            safetyNotes: content?.safetyNotes ?? '',
+            duration: content?.duration ?? '',
+            thumbnailUrl: content?.thumbnailUrl ?? '',
+            userId: widget.profile.uid,
+          );
+        },
       ),
-      successMessage: content == null
-          ? 'Konten ditambahkan.'
-          : 'Konten diperbarui.',
+    );
+    if (saved != true || !mounted) return;
+    setState(() => _cachedStream = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          content == null ? 'Konten ditambahkan.' : 'Konten diperbarui.',
+        ),
+      ),
     );
   }
 
   Future<void> _delete(EducationContent content) async {
-    final confirmed = await confirmDelete(
-      context,
-      title: 'Hapus konten?',
-      message: 'Konten ${content.title} akan dihapus dari materi edukasi.',
-    );
-    if (!confirmed || !mounted) return;
-    await runOperationWithFeedback(
-      context,
-      operation: () => _service.delete(content.id, userId: widget.profile.uid),
-      successMessage: 'Konten dihapus.',
-    );
+    if (!widget.profile.canDeleteEducation || !_deleting.add(content.id)) {
+      return;
+    }
+    try {
+      final confirmed = await confirmDelete(
+        context,
+        title: 'Hapus konten?',
+        message: 'Konten ${content.title} akan dihapus dari materi edukasi.',
+      );
+      if (!confirmed || !mounted || !widget.profile.canDeleteEducation) return;
+      final deleted = await runOperationWithFeedback(
+        context,
+        operation: () =>
+            _service.delete(content.id, userId: widget.profile.uid),
+        successMessage: 'Konten dihapus.',
+      );
+      if (deleted && mounted) setState(() => _cachedStream = null);
+    } finally {
+      _deleting.remove(content.id);
+    }
   }
 
   @override
@@ -203,6 +240,10 @@ class _EducationScreenState extends State<EducationScreen> {
             const SizedBox(height: 14),
             Expanded(
               child: StreamBuilder<List<EducationContent>>(
+                key: ValueKey((
+                  widget.profile.uid,
+                  widget.profile.effectiveRole,
+                )),
                 stream: _contentsStream(),
                 builder: (context, snapshot) {
                   final state = asyncSnapshotState(snapshot);
@@ -228,15 +269,21 @@ class _EducationScreenState extends State<EducationScreen> {
                         (_moduleType == null || item.moduleType == _moduleType);
                   }).toList();
                   if (contents.isEmpty) {
-                    return EmptyState(
-                      title:
-                          _query.isEmpty && _type == null && _moduleType == null
-                          ? 'Belum ada materi edukasi'
-                          : 'Materi tidak ditemukan',
-                      message: _query.isEmpty
-                          ? 'Panduan akan muncul setelah admin menerbitkan konten pertama.'
-                          : 'Coba gunakan kata kunci lain atau ubah filter pencarian.',
-                      icon: Icons.school_outlined,
+                    return Center(
+                      child: SingleChildScrollView(
+                        child: EmptyState(
+                          title:
+                              _query.isEmpty &&
+                                  _type == null &&
+                                  _moduleType == null
+                              ? 'Belum ada materi edukasi'
+                              : 'Materi tidak ditemukan',
+                          message: _query.isEmpty
+                              ? 'Panduan akan muncul setelah admin menerbitkan konten pertama.'
+                              : 'Coba gunakan kata kunci lain atau ubah filter pencarian.',
+                          icon: Icons.school_outlined,
+                        ),
+                      ),
                     );
                   }
                   return LayoutBuilder(
@@ -562,9 +609,11 @@ class _EducationFormValue {
 }
 
 class _EducationFormDialog extends StatefulWidget {
-  const _EducationFormDialog({this.content});
+  const _EducationFormDialog({required this.onSave, this.content});
 
   final EducationContent? content;
+  final Future<void> Function(_EducationFormValue value, String requestId)
+  onSave;
 
   @override
   State<_EducationFormDialog> createState() => _EducationFormDialogState();
@@ -578,6 +627,9 @@ class _EducationFormDialogState extends State<_EducationFormDialog> {
   late String _type;
   late String _status;
   String? _moduleType;
+  final _requestId = const Uuid().v4();
+  bool _saving = false;
+  String? _error;
 
   @override
   void initState() {
@@ -607,114 +659,187 @@ class _EducationFormDialogState extends State<_EducationFormDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(
-      context,
-      _EducationFormValue(
-        title: _title.text,
-        type: _type,
-        content: _content.text,
-        externalUrl: _url.text,
-        status: _status,
-        moduleType: _moduleType ?? '',
-      ),
-    );
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(
+        _EducationFormValue(
+          title: _title.text,
+          type: _type,
+          content: _content.text,
+          externalUrl: _url.text,
+          status: _status,
+          moduleType: _moduleType ?? '',
+        ),
+        _requestId,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) setState(() => _error = 'Konten gagal disimpan: $error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AppDialogShell(
-      title: widget.content == null ? 'Tambah Edukasi' : 'Edit Edukasi',
-      maxWidth: 560,
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _title,
-              decoration: const InputDecoration(labelText: 'Judul'),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            ResponsiveFormRow(
-              breakpoint: 400,
+    return PopScope(
+      canPop: !_saving,
+      child: AppDialogShell(
+        title: widget.content == null ? 'Tambah Edukasi' : 'Edit Edukasi',
+        maxWidth: 560,
+        content: AbsorbPointer(
+          absorbing: _saving,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                DropdownButtonFormField<String>(
-                  initialValue: _type,
-                  decoration: const InputDecoration(labelText: 'Tipe'),
-                  items: [
-                    for (final type in EducationType.values)
-                      DropdownMenuItem(
-                        value: type,
-                        child: Text(EducationType.label(type)),
+                if (_error != null) ...[
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
                       ),
-                  ],
-                  onChanged: (value) => setState(() => _type = value!),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                TextFormField(
+                  key: const ValueKey('education-title'),
+                  controller: _title,
+                  decoration: const InputDecoration(labelText: 'Judul'),
+                  validator: _required,
                 ),
-                DropdownButtonFormField<String?>(
-                  initialValue: _moduleType,
+                const SizedBox(height: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey('education-type'),
+                      isExpanded: true,
+                      initialValue: _type,
+                      decoration: const InputDecoration(labelText: 'Tipe'),
+                      items: [
+                        for (final type in EducationType.values)
+                          DropdownMenuItem(
+                            value: type,
+                            child: Text(
+                              EducationType.label(type),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => _type = value!),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String?>(
+                      key: const ValueKey('education-module'),
+                      isExpanded: true,
+                      initialValue: _moduleType,
+                      decoration: const InputDecoration(
+                        labelText: 'Modul (Opsional)',
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('Umum'),
+                        ),
+                        for (final module in FarmModules.values)
+                          DropdownMenuItem(
+                            value: module.id,
+                            child: Text(
+                              module.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        if (_moduleType != null &&
+                            !FarmModules.values.any(
+                              (module) => module.id == _moduleType,
+                            ))
+                          DropdownMenuItem(
+                            value: _moduleType,
+                            child: Text(
+                              _moduleType!,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => _moduleType = value),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const ValueKey('education-content'),
+                  controller: _content,
+                  maxLines: 7,
+                  decoration: InputDecoration(
+                    labelText: _type == EducationType.sop
+                        ? 'Langkah SOP (pisahkan dengan enter)'
+                        : 'Isi konten/deskripsi',
+                  ),
+                  validator: _required,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const ValueKey('education-url'),
+                  controller: _url,
+                  validator: (value) =>
+                      _type == EducationType.video &&
+                          !isSafeEducationUrl(value ?? '')
+                      ? 'Masukkan URL video HTTPS yang valid.'
+                      : null,
+                  keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
-                    labelText: 'Modul (Opsional)',
+                    labelText: 'URL video HTTPS',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('education-status'),
+                  isExpanded: true,
+                  initialValue: _status,
+                  decoration: const InputDecoration(
+                    labelText: 'Status Publikasi',
                   ),
                   items: [
-                    const DropdownMenuItem(value: null, child: Text('Umum')),
-                    for (final module in FarmModules.values)
+                    for (final status in EducationStatus.values)
                       DropdownMenuItem(
-                        value: module.id,
-                        child: Text(module.name),
+                        value: status,
+                        child: Text(
+                          EducationStatus.label(status),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                   ],
-                  onChanged: (value) => setState(() => _moduleType = value),
+                  onChanged: (value) => setState(() => _status = value!),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _content,
-              maxLines: 7,
-              decoration: InputDecoration(
-                labelText: _type == EducationType.sop
-                    ? 'Langkah SOP (pisahkan dengan enter)'
-                    : 'Isi konten/deskripsi',
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _url,
-              validator: (value) =>
-                  _type == EducationType.video &&
-                      !isSafeEducationUrl(value ?? '')
-                  ? 'Masukkan URL video HTTPS yang valid.'
-                  : null,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(labelText: 'URL video HTTPS'),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _status,
-              decoration: const InputDecoration(labelText: 'Status Publikasi'),
-              items: [
-                for (final status in EducationStatus.values)
-                  DropdownMenuItem(
-                    value: status,
-                    child: Text(EducationStatus.label(status)),
-                  ),
-              ],
-              onChanged: (value) => setState(() => _status = value!),
-            ),
-          ],
+          ),
         ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: Text(_saving ? 'Menyimpan...' : 'Simpan'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Batal'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('Simpan')),
-      ],
     );
   }
 }

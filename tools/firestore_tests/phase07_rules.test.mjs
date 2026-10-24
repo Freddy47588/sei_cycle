@@ -49,6 +49,15 @@ test('privileged profile edits must pass trusted last-Admin workflow',async()=>{
   await assertFails(updateDoc(doc(dbFor('admin'),'users/field'),{role:'admin'}));
   await assertFails(deleteDoc(doc(dbFor('admin'),'users/field')));
 });
+
+test('legacy-disabled Admin profiles cannot submit commands or read operational data',async()=>{
+  for (const flags of [{is_active:false}, {isActive:true,is_active:false}]) {
+    await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'users/legacy_disabled'),{uid:'legacy_disabled',id:'legacy_disabled',role:'admin',...flags}));
+    await assertFails(setDoc(doc(dbFor('legacy_disabled'),'admin_requests/legacy'),command('legacy_disabled')));
+    await assertFails(getDoc(doc(dbFor('legacy_disabled'),'education_contents/published')));
+    await assertFails(getDoc(doc(dbFor('legacy_disabled'),'admin_audit/a')));
+  }
+});
 test('education drafts/archives are Admin-only even through direct SDK',async()=>{
   for (const status of ['published','draft','archived']) {
     await assertSucceeds(getDoc(doc(dbFor('admin'),'education_contents',status)));

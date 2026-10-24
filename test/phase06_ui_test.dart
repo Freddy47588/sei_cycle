@@ -173,7 +173,8 @@ void main() {
   setUpAll(() async {
     await initializeDateFormatting('id_ID');
     if (capture) {
-      final root = Platform.environment['FLUTTER_ROOT'] ?? 'C:/src/flutter';
+      final root = Platform.environment['FLUTTER_ROOT'];
+      if (root == null) return;
       for (final (family, file) in [
         ('Roboto', 'Roboto-Regular.ttf'),
         ('Ahem', 'Roboto-Regular.ttf'),
@@ -189,7 +190,7 @@ void main() {
       }
     }
   });
-  for (final width in [320.0, 360.0, 768.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     testWidgets('paid sale quantities money and detail fit $width', (t) async {
       final db = MemoryFirestore();
       seedHarvest(db);

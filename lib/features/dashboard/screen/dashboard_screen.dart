@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/constants/farm_modules.dart';
+import '../../../core/widgets/kebun_sei_logo.dart';
 import '../../batches/screen/batch_detail_screen.dart';
 import '../../batches/screen/batch_list_screen.dart';
 import '../../batches/services/batch_service.dart';
@@ -470,99 +471,105 @@ String dashboardError(Object? error) => dashboardLoadError(error);
 
 class _WelcomeHeader extends StatelessWidget {
   @override
-  Widget build(BuildContext context) {
-    final logoSize = MediaQuery.sizeOf(context).width < 400 ? 60.0 : 80.0;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.primaryGreen, AppColors.primaryGreenLight],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryGreen.withValues(alpha: 0.3),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact = constraints.maxWidth < 560;
+      final logoSize = compact
+          ? constraints.maxWidth < 330
+                ? 76.0
+                : 88.0
+          : 112.0;
+      final heading = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Selamat Datang!',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Dashboard SeiCycle',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Kebun Sei - Sistem Pertanian & Peternakan Terintegrasi Berbasis Nutrisi Berkelanjutan',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _HeaderBadge(
-                      icon: Icons.location_on_outlined,
-                      label: 'Pakisaji, Malang',
-                    ),
-                    _HeaderBadge(
-                      icon: Icons.area_chart_outlined,
-                      label: '+/-500 m2',
-                    ),
-                  ],
-                ),
-              ],
+          const Text(
+            'Selamat Datang!',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(width: 16),
-          Container(
-            width: logoSize,
-            height: logoSize,
-            decoration: const BoxDecoration(
+          const SizedBox(height: 4),
+          Text(
+            'Dashboard SeiCycle',
+            style: TextStyle(
               color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-            padding: const EdgeInsets.all(10),
-            child: Image.asset(
-              'lib/assets/logo.png',
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => const Icon(
-                Icons.eco_outlined,
-                color: AppColors.primaryGreen,
-                size: 44,
-              ),
+              fontSize: compact ? 22 : 26,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0,
             ),
           ),
         ],
-      ),
-    );
-  }
+      );
+      const details = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Kebun Sei - Sistem Pertanian & Peternakan Terintegrasi Berbasis Nutrisi Berkelanjutan',
+            style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
+          ),
+          SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _HeaderBadge(
+                icon: Icons.location_on_outlined,
+                label: 'Pakisaji, Malang',
+              ),
+              _HeaderBadge(icon: Icons.area_chart_outlined, label: '+/-500 m2'),
+            ],
+          ),
+        ],
+      );
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [AppColors.primaryGreen, AppColors.primaryGreenLight],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primaryGreen.withValues(alpha: 0.3),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: heading),
+                      const SizedBox(width: 12),
+                      KebunSeiLogo(size: logoSize),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  details,
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [heading, const SizedBox(height: 4), details],
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  KebunSeiLogo(size: logoSize),
+                ],
+              ),
+      );
+    },
+  );
 }
 
 class _HeaderBadge extends StatelessWidget {

@@ -96,7 +96,8 @@ void main() {
   setUpAll(() async {
     await initializeDateFormatting('id_ID');
     if (capture) {
-      final root = Platform.environment['FLUTTER_ROOT'] ?? 'C:/src/flutter';
+      final root = Platform.environment['FLUTTER_ROOT'];
+      if (root == null) return;
       final font = FontLoader('Roboto')
         ..addFont(
           File(
@@ -504,7 +505,7 @@ void main() {
       );
     },
   );
-  for (final width in [320.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     for (final screen in [
       'inventory',
       'history',

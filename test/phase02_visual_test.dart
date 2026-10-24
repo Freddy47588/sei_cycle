@@ -16,7 +16,8 @@ void main() {
   setUpAll(() async {
     await initializeDateFormatting('id_ID');
     if (capture) {
-      final root = Platform.environment['FLUTTER_ROOT'] ?? 'C:/src/flutter';
+      final root = Platform.environment['FLUTTER_ROOT'];
+      if (root == null) return;
       for (final family in ['Roboto', 'Ahem', 'MaterialIcons']) {
         final path = family == 'MaterialIcons'
             ? 'materialicons-regular.otf'
@@ -31,7 +32,7 @@ void main() {
       }
     }
   });
-  for (final width in [320.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     for (final detail in [false, true]) {
       testWidgets('${detail ? 'detail' : 'list'} fits $width at text scale 1.4', (
         tester,

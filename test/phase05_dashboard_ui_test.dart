@@ -111,7 +111,7 @@ void main() {
       }
     }
   });
-  for (final width in [320.0, 360.0, 768.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     for (final additive in [false, true]) {
       testWidgets(
         'dashboard and ${additive ? 'bar' : 'line'} chart fit $width at text scale 1.4',

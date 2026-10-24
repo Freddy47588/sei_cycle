@@ -9,7 +9,16 @@ import '../services/auth_service.dart';
 import 'login_screen.dart';
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({super.key});
+  const AuthGate({
+    this.authService,
+    this.profileService,
+    this.appBuilder,
+    super.key,
+  });
+
+  final AuthService? authService;
+  final UserProfileService? profileService;
+  final Widget Function(AppUser profile)? appBuilder;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -20,12 +29,29 @@ class _AuthGateState extends State<AuthGate> {
   late final UserProfileService _profileService;
   Future<void>? _ensureProfileFuture;
   String? _ensuredUid;
+  (String, String, bool)? _visibleSession;
 
   @override
   void initState() {
     super.initState();
-    _profileService = UserProfileService();
-    _authService = AuthService(userProfileService: _profileService);
+    _profileService = widget.profileService ?? UserProfileService();
+    _authService =
+        widget.authService ?? AuthService(userProfileService: _profileService);
+  }
+
+  void _updateVisibleSession((String, String, bool)? identity) {
+    final previous = _visibleSession;
+    _visibleSession = identity;
+    if (previous == null || previous == identity) return;
+    // Detail routes and root dialogs hold the profile that opened them. Revoke
+    // those routes alongside the shell when its authorization changes.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(
+        context,
+        rootNavigator: true,
+      ).popUntil((route) => route.isFirst);
+    });
   }
 
   Future<void> _ensureProfile(User user) {
@@ -47,9 +73,13 @@ class _AuthGateState extends State<AuthGate> {
 
         final user = authSnapshot.data;
         if (user == null) {
+          _updateVisibleSession(null);
           _ensuredUid = null;
           _ensureProfileFuture = null;
           return LoginScreen(authService: _authService);
+        }
+        if (_visibleSession != null && _visibleSession!.$1 != user.uid) {
+          _updateVisibleSession(null);
         }
 
         return FutureBuilder<void>(
@@ -83,10 +113,12 @@ class _AuthGateState extends State<AuthGate> {
                   allowNullData: true,
                 );
                 if (state != null) {
+                  if (profileSnapshot.hasError) _updateVisibleSession(null);
                   return Scaffold(body: state);
                 }
-                final profile = profileSnapshot.requireData;
+                final profile = profileSnapshot.data;
                 if (profile == null) {
+                  _updateVisibleSession(null);
                   return const Scaffold(
                     body: ErrorState(
                       message: 'Dokumen profil pengguna tidak ditemukan.',
@@ -94,9 +126,21 @@ class _AuthGateState extends State<AuthGate> {
                   );
                 }
                 if (!profile.isActive) {
+                  _updateVisibleSession(null);
                   return _InactiveAccount(authService: _authService);
                 }
-                return AppShell(key: ValueKey(profile.uid), profile: profile);
+                final identity = (
+                  profile.uid,
+                  profile.effectiveRole,
+                  profile.isActive,
+                );
+                _updateVisibleSession(identity);
+                return KeyedSubtree(
+                  key: ValueKey(identity),
+                  child:
+                      widget.appBuilder?.call(profile) ??
+                      AppShell(profile: profile),
+                );
               },
             );
           },

@@ -98,7 +98,8 @@ void main() {
   setUpAll(() async {
     await initializeDateFormatting('id_ID');
     if (capture) {
-      final root = Platform.environment['FLUTTER_ROOT'] ?? 'C:/src/flutter';
+      final root = Platform.environment['FLUTTER_ROOT'];
+      if (root == null) return;
       for (final family in ['Roboto', 'Ahem', 'MaterialIcons']) {
         final file = File(
           '$root/bin/cache/artifacts/material_fonts/${family == 'MaterialIcons' ? 'materialicons-regular.otf' : 'Roboto-Regular.ttf'}',
@@ -496,7 +497,7 @@ void main() {
       expect(find.text('Belum terhubung ke batch'), findsNothing);
     },
   );
-  for (final width in [320.0, 1280.0]) {
+  for (final width in [320.0, 360.0, 393.0, 768.0, 1280.0]) {
     for (final page in ['list', 'detail', 'form']) {
       testWidgets('$page fits $width at text scale 1.4', (t) async {
         db.documents['batches/KOLAM-A'] = batchDoc('KOLAM-A');

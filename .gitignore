@@ -1,45 +1,382 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+# =========================================================
+# SeiCycle - Flutter + Firebase .gitignore
+# Aman untuk repo public: cegah build output, cache, secret,
+# Firebase Admin SDK key, .env, Android/iOS signing key, dll.
+# =========================================================
 
-# IntelliJ related
+
+# ---------------------------------------------------------
+# OS generated files
+# ---------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+
+# ---------------------------------------------------------
+# Editor / IDE
+# ---------------------------------------------------------
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# IntelliJ / Android Studio
 *.iml
 *.ipr
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code
+# Boleh commit .vscode/launch.json atau tasks.json kalau memang dipakai tim.
+# Untuk aman, ignore setting lokal user.
+.vscode/settings.json
+.vscode/.ropeproject/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+
+# ---------------------------------------------------------
+# Logs
+# ---------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+
+# ---------------------------------------------------------
+# Environment variables & local secrets
+# ---------------------------------------------------------
+.env
+.env.*
+*.env
+*.pem
+*.key
+
+# Contoh env boleh di-commit bila tidak berisi secret asli
+!.env.example
+!*.env.example
+
+
+# ---------------------------------------------------------
+# Firebase secret keys - JANGAN PERNAH DI-COMMIT
+# ---------------------------------------------------------
+serviceAccountKey.json
+service-account.json
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+**/serviceAccountKey.json
+**/service-account.json
+**/firebase-service-account.json
+**/*-firebase-adminsdk-*.json
+
+# Firebase local emulator/cache
+.firebase/
+.firebase-debug.log
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+
+
+# ---------------------------------------------------------
+# Flutter / Dart / Pub
+# ---------------------------------------------------------
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
-/build/
-/coverage/
+build/
+coverage/
 
-# Symbolication related
+# Generated docs
+**/doc/api/
+
+# Symbolication / obfuscation
 app.*.symbols
-
-# Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
+# Flutter local build metadata
+**/ios/Flutter/.last_build_id
+
+
+# ---------------------------------------------------------
+# Android
+# ---------------------------------------------------------
+android/local.properties
+local.properties
+
+# Android Studio build outputs
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Gradle
+.gradle/
+**/.gradle/
+**/build/
+!android/app/src/**/build/
+
+# Android signing keys - RAHASIA
+*.jks
+*.keystore
+key.properties
+android/key.properties
+android/app/key.properties
+upload-keystore.jks
+android/app/upload-keystore.jks
+
+# Google Services client config
+# google-services.json biasanya bukan admin secret, tapi untuk repo public
+# lebih aman tidak di-commit pada tahap awal.
+android/app/google-services.json
+android/app/src/**/google-services.json
+
+
+# ---------------------------------------------------------
+# iOS / macOS
+# ---------------------------------------------------------
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/.symlinks/
+ios/Runner.xcworkspace/xcuserdata/
+ios/Runner.xcodeproj/xcuserdata/
+ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+
+macos/Flutter/ephemeral/
+macos/Pods/
+macos/.symlinks/
+macos/Runner.xcworkspace/xcuserdata/
+macos/Runner.xcodeproj/xcuserdata/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Xcode
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# iOS/macOS signing - RAHASIA
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer
+
+
+# ---------------------------------------------------------
+# Web
+# ---------------------------------------------------------
+# Build web ada di build/web, sudah di-ignore oleh build/
+web/firebase-messaging-sw.js.map
+
+
+# ---------------------------------------------------------
+# Windows / Linux native build
+# ---------------------------------------------------------
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+
+
+# ---------------------------------------------------------
+
+# Contoh env boleh di-commit bila tidak berisi secret asli
+!.env.example
+!*.env.example
+
+
+# ---------------------------------------------------------
+# Firebase secret keys - JANGAN PERNAH DI-COMMIT
+# ---------------------------------------------------------
+serviceAccountKey.json
+service-account.json
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+**/serviceAccountKey.json
+**/service-account.json
+**/firebase-service-account.json
+**/*-firebase-adminsdk-*.json
+
+# Firebase local emulator/cache
+.firebase/
+.firebase-debug.log
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+
+
+# ---------------------------------------------------------
+# Flutter / Dart / Pub
+# ---------------------------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+
+# Generated docs
+**/doc/api/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# Flutter local build metadata
+**/ios/Flutter/.last_build_id
+
+
+# ---------------------------------------------------------
+# Android
+# ---------------------------------------------------------
+android/local.properties
+local.properties
+
+# Android Studio build outputs
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Gradle
+.gradle/
+**/.gradle/
+**/build/
+!android/app/src/**/build/
+
+# Android signing keys - RAHASIA
+*.jks
+*.keystore
+key.properties
+android/key.properties
+android/app/key.properties
+upload-keystore.jks
+android/app/upload-keystore.jks
+
+# Google Services client config
+# google-services.json biasanya bukan admin secret, tapi untuk repo public
+# lebih aman tidak di-commit pada tahap awal.
+android/app/google-services.json
+android/app/src/**/google-services.json
+
+
+# ---------------------------------------------------------
+# iOS / macOS
+# ---------------------------------------------------------
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/.symlinks/
+ios/Runner.xcworkspace/xcuserdata/
+ios/Runner.xcodeproj/xcuserdata/
+ios/Runner.xcodeproj/project.xcworkspace/xcuserdata/
+
+macos/Flutter/ephemeral/
+macos/Pods/
+macos/.symlinks/
+macos/Runner.xcworkspace/xcuserdata/
+macos/Runner.xcodeproj/xcuserdata/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Xcode
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# iOS/macOS signing - RAHASIA
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer
+
+
+# ---------------------------------------------------------
+# Web
+# ---------------------------------------------------------
+# Build web ada di build/web, sudah di-ignore oleh build/
+web/firebase-messaging-sw.js.map
+
+
+# ---------------------------------------------------------
+# Windows / Linux native build
+# ---------------------------------------------------------
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+
+
+# ---------------------------------------------------------
+# Node.js cache (tidak digunakan oleh MVP, tetap diabaikan)
+# ---------------------------------------------------------
+node_modules/
+# Temporary files
+# ---------------------------------------------------------
+tmp/
+temp/
+.cache/
+*.tmp
+*.bak
+*.backup
+*.old
+
+
+# ---------------------------------------------------------
+# Local notes / personal files
+# ---------------------------------------------------------
+notes.local.md
+todo.local.md
+PRIVATE.md
+secrets/
+credentials/
+private/
+
+# Python audit tool cache
+__pycache__/
+
+# Private Codex checkpoints and local assistant configuration
+CODEX_PROGRESS.md
+codex_progress.md
+.codex/
+
+# Private application builds and raw production audit exports
+*.apk
+*.aab
+production-snapshot*.json
+reconciliation-snapshot*.json
+admin-evidence*.json
+
+# Local Kotlin compiler cache
+android/.kotlin/

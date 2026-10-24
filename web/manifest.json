@@ -1,11 +1,11 @@
 {
-    "name": "sei_cycle",
-    "short_name": "sei_cycle",
+    "name": "SeiCycle",
+    "short_name": "SeiCycle",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Aplikasi operasional Kebun Sei berbasis Flutter dan Firebase.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

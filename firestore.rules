@@ -1,0 +1,901 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function activeUser() {
+      return signedIn() && hasProfile()
+        && currentUser().data.get('isActive', true) != false
+        && currentUser().data.get('is_active', true) != false
+        && currentUser().data.get('isDeleted', false) != true;
+    }
+
+    function canViewAppData() {
+      return activeUser();
+    }
+
+    function profileRole() {
+      return activeUser() ? currentUser().data.role : null;
+    }
+
+    function effectiveProfileRole() {
+      let role = currentUser().data.role;
+      return role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin '] ? 'admin' : role == 'operator' ? 'operator_lapangan' : role;
+    }
+
+    function hasRole(role) {
+      return activeUser() && profileRole() == role;
+    }
+
+    function hasAnyRole(roles) {
+      return activeUser() && profileRole() in roles;
+    }
+
+    /*
+      Role utama branch backend:
+      - admin
+      - operator_lapangan
+      - operator_keuangan
+
+      Legacy dibaca agar data lama tidak langsung rusak:
+      - operator
+      - mitra
+      - peserta_edukasi
+    */
+
+    function isAdmin() {
+      return activeUser() && currentUser().data.role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin '];
+    }
+
+    function isOperatorLapangan() {
+      return hasAnyRole([
+        'operator_lapangan',
+        'operator'
+      ]);
+    }
+
+    function isOperatorKeuangan() {
+      return hasRole('operator_keuangan');
+    }
+
+    function isRoleTarget(role) {
+      return role == 'all' || supportedRole(role);
+    }
+
+    function canManageOperations() {
+      return activeUser() && currentUser().data.role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin ', ' admin ', 'operator_lapangan', 'operator'];
+    }
+
+    function canManageFinance() {
+      return isAdmin() || isOperatorKeuangan();
+    }
+
+    function supportedRole(role) {
+      return role in [
+        'admin',
+        'operator_lapangan',
+        'operator_keuangan',
+        'operator',
+        'mitra',
+        'peserta_edukasi'
+      ];
+    }
+
+    function createsOwnDocument(documentId) {
+      return actualReference(request.resource.data)
+        && !('isSampleData' in request.resource.data)
+        && !('sampleVersion' in request.resource.data)
+        && request.resource.data.id == documentId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.isDeleted == false;
+    }
+
+    function updatesExistingDocument() {
+      return actualReference(resource.data) && actualReference(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    function validFinanceTransaction(documentId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'type',
+          'category',
+          'amount',
+          'date',
+          'description',
+          'notes',
+          'paymentMethod',
+          'moduleType',
+          'createdAt',
+          'updatedAt',
+          'createdBy',
+          'updatedBy',
+          'isDeleted',
+          'isSampleData',
+          'sampleVersion', 'requestId', 'source', 'saleId', 'version', 'creationPayload', 'lastEditId'
+        ])
+        && data.id == documentId
+        && data.type in ['income', 'expense']
+        && data.category is string
+        && data.category.size() > 0
+        && data.amount is number
+        && data.amount > 0 && data.amount <= 1000000000000
+        && data.date is timestamp
+        && data.date >= timestamp.date(1900, 1, 1) && data.date <= timestamp.date(2200, 12, 31)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string
+        && data.updatedBy is string
+        && data.isDeleted is bool
+        && (!('isSampleData' in data.keys()) || data.isSampleData is bool)
+        && (!('sampleVersion' in data.keys()) || data.sampleVersion is string)
+        && (!('description' in data.keys()) || data.description is string)
+        && (!('notes' in data.keys()) || data.notes is string)
+        && (!('paymentMethod' in data.keys()) || data.paymentMethod is string)
+        && (!('moduleType' in data.keys()) || data.moduleType is string);
+    }
+
+    function userCanUpdateOwnProfile(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/admin_tombstones/$('users__' + uid))
+        && request.resource.data.uid == uid
+        && request.resource.data.id == uid
+
+        // user biasa tidak boleh mengubah role dan status aktif
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.isActive == resource.data.isActive
+
+        // field profil ringan yang boleh diubah sendiri
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'id',
+          'uid',
+          'name',
+          'email',
+          'photoUrl',
+          'fcmToken',
+          'fcmTokenUpdatedAt',
+          'updatedAt'
+        ]);
+    }
+
+    function canReadNotification(data) {
+      return activeUser() && (
+        isAdmin()
+        || data.userId == request.auth.uid
+        || (data.userId == '' && (data.targetRole == 'all' || data.targetRole == effectiveProfileRole()))
+      );
+    }
+
+    function validNotificationBase(documentId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'title',
+          'body',
+          'type',
+          'targetRole',
+          'userId',
+          'relatedCollection',
+          'relatedId',
+          'isRead',
+          'readAt',
+          'createdAt',
+          'updatedAt',
+          'createdBy',
+          'updatedBy',
+          'scheduledAt',
+          'isDeleted',
+          'isSampleData',
+          'sampleVersion'
+        ])
+        && data.id == documentId
+        && data.title is string
+        && data.title.size() > 0
+        && data.body is string
+        && data.body.size() > 0
+        && data.type in [
+          'low_stock',
+          'schedule_overdue',
+          'production_reminder',
+          'system'
+        ]
+        && data.targetRole is string
+        && isRoleTarget(data.targetRole)
+        && data.userId is string
+        && data.isRead is bool
+        && data.isRead == false
+        && data.createdAt is timestamp
+        && data.isDeleted is bool
+        && data.isDeleted == false
+        && (!('updatedAt' in data.keys()) || data.updatedAt is timestamp)
+        && (!('createdBy' in data.keys()) || data.createdBy is string)
+        && (!('updatedBy' in data.keys()) || data.updatedBy is string)
+        && (!('isSampleData' in data.keys()) || data.isSampleData is bool)
+        && (!('sampleVersion' in data.keys()) || data.sampleVersion is string)
+        && (!('relatedCollection' in data.keys()) || data.relatedCollection is string)
+        && (!('relatedId' in data.keys()) || data.relatedId is string)
+        && (!('scheduledAt' in data.keys()) || data.scheduledAt is timestamp);
+    }
+
+    function userCanCreateOwnNotification(documentId) {
+      return activeUser()
+        && validNotificationBase(documentId, request.resource.data)
+        && request.resource.data.type in [
+          'low_stock',
+          'schedule_overdue',
+          'production_reminder'
+        ]
+        && request.resource.data.userId == request.auth.uid
+        && isRoleTarget(request.resource.data.targetRole);
+    }
+
+    function userCanRefreshOwnNotification() {
+      return activeUser()
+        && validNotificationBase(resource.data.id, request.resource.data)
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid
+        && isRoleTarget(request.resource.data.targetRole)
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.type in [
+          'low_stock',
+          'schedule_overdue',
+          'production_reminder'
+        ];
+    }
+
+    function adminCanCreateSystemNotification(documentId) {
+      return isAdmin()
+        && validNotificationBase(documentId, request.resource.data)
+        && request.resource.data.type == 'system';
+    }
+
+    /*
+      USERS
+      Semua user login bisa baca profil untuk tampilan/role app.
+      User biasa hanya bisa buat dan edit profil sendiri.
+      Admin bisa tambah/edit/hapus semua user.
+    */
+    match /users/{uid} {
+      allow create: if (
+        signedIn()
+        && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/admin_tombstones/$('users__' + uid))
+        && request.resource.data.uid == uid
+        && request.resource.data.id == uid
+
+        // default sesuai rules branch backend yang kamu kirim
+        && request.resource.data.role == 'operator_lapangan'
+        && request.resource.data.isActive == true
+      );
+
+      allow read: if signedIn();
+
+      allow update: if userCanUpdateOwnProfile(uid);
+      allow delete: if false;
+    }
+
+    /*
+      MASTER MODUL KEBUN
+      Semua user login bisa lihat.
+      Hanya admin yang boleh kelola.
+    */
+    match /farm_modules/{moduleId} {
+      allow read: if canViewAppData();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Phase 03: deterministic code/document ID makes uniqueness atomic.
+    function validBatch(id, d) {
+      return d.keys().hasAll(['id', 'name', 'code', 'moduleType', 'locationName',
+          'status', 'startedAt', 'expectedHarvestAt', 'completedAt', 'initialQuantity',
+          'initialUnit', 'commodity', 'notes', 'createdBy', 'updatedBy',
+          'createdAt', 'updatedAt', 'isDeleted'])
+        && d.keys().hasOnly(['id', 'name', 'code', 'moduleType', 'locationName',
+          'status', 'startedAt', 'expectedHarvestAt', 'completedAt', 'initialQuantity',
+          'initialUnit', 'commodity', 'notes', 'createdBy', 'updatedBy',
+          'createdAt', 'updatedAt', 'isDeleted'])
+        && d.id == id && d.code == id
+        && d.code is string && d.code.matches('^[A-Z0-9][A-Z0-9_-]{2,39}$')
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120 && d.name.matches('.*[^ \\t\\r\\n].*')
+        && d.locationName is string && d.locationName.size() > 0 && d.locationName.size() <= 120 && d.locationName.matches('.*[^ \\t\\r\\n].*')
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.status in ['planned', 'active', 'completed', 'archived']
+        && d.startedAt is timestamp
+        && (d.expectedHarvestAt == null || (d.expectedHarvestAt is timestamp && d.expectedHarvestAt >= d.startedAt))
+        && ((d.status in ['planned', 'active'] && d.completedAt == null)
+          || (d.status in ['completed', 'archived'] && d.completedAt is timestamp))
+        && d.initialUnit is string && d.initialUnit.size() <= 30
+        && (d.initialQuantity == null || (d.initialQuantity is number && d.initialQuantity >= 0
+          && d.initialQuantity <= 1000000000000000 && d.initialUnit.size() > 0 && d.initialUnit.matches('.*[^ \\t\\r\\n].*')))
+        && d.commodity is string && d.commodity.size() <= 120
+        && d.notes is string && d.notes.size() <= 3000
+        && d.createdBy is string && d.updatedBy is string
+        && d.createdAt is timestamp && d.updatedAt is timestamp && d.isDeleted == false;
+    }
+    function validBatchTransition() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'completedAt', 'updatedBy', 'updatedAt'])
+        && ((resource.data.status == 'planned' && request.resource.data.status == 'active')
+          || (resource.data.status == 'active' && request.resource.data.status == 'completed'
+            && request.resource.data.completedAt == request.time)
+          || (resource.data.status == 'completed' && request.resource.data.status == 'archived'
+            && request.resource.data.completedAt == resource.data.completedAt));
+    }
+    match /batches/{batchId} {
+      allow read: if canViewAppData();
+      allow create: if canManageOperations() && validBatch(batchId, request.resource.data)
+        && createsOwnDocument(batchId) && request.resource.data.status == 'planned'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if canManageOperations() && validBatch(batchId, request.resource.data)
+        && updatesExistingDocument() && request.resource.data.updatedAt == request.time
+        && (validBatchTransition() || (
+          resource.data.status in ['planned', 'active']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'locationName', 'expectedHarvestAt', 'commodity', 'notes', 'updatedBy', 'updatedAt'])));
+      allow delete: if false;
+    }
+    function validLogbookBatch(d) {
+      return !('batchId' in d) || (d.batchId is string && d.batchId.size() > 0
+        && existsAfter(/databases/$(database)/documents/batches/$(d.batchId))
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.isDeleted == false
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.status == 'active'
+        && getAfter(/databases/$(database)/documents/batches/$(d.batchId)).data.moduleType == d.moduleType);
+    }
+
+    /*
+      LOGBOOK OPERASIONAL
+      Semua user login bisa lihat tampilan.
+      Admin/operator lapangan bisa tambah dan edit notes dengan audit atomik.
+      Koreksi kuantitas dan pembatalan belum diaktifkan pada Phase 02.
+    */
+    match /logbooks/{logbookId} {
+      allow read: if canViewAppData();
+
+      allow create: if canManageOperations()
+        && validLogbookBatch(request.resource.data)
+        && createsOwnDocument(logbookId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if canManageOperations()
+        && updatesExistingDocument()
+        && resource.data.isDeleted == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notes', 'updatedBy', 'updatedAt', 'lastNoteEditId'
+        ])
+        && request.resource.data.notes is string
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastNoteEditId is string
+        && !exists(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId))
+        && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId)).data.before == resource.data.notes
+        && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)/note_edits/$(request.resource.data.lastNoteEditId)).data.after == request.resource.data.notes;
+
+      allow delete: if false;
+
+      match /note_edits/{editId} {
+        allow read: if canViewAppData();
+        allow create: if canManageOperations()
+          && request.resource.data.keys().hasOnly(['before', 'after', 'editedBy', 'editedAt'])
+          && request.resource.data.before is string
+          && request.resource.data.after is string
+          && request.resource.data.editedBy == request.auth.uid
+          && request.resource.data.editedAt == request.time
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.lastNoteEditId == editId
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.notes == request.resource.data.after
+          && getAfter(/databases/$(database)/documents/logbooks/$(logbookId)).data.updatedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    /*
+      INVENTORY
+      Collection branch backend: inventory
+      Bukan inventory_items.
+    */
+    // Phase 04: no stock change (including admin) without a new paired ledger.
+    function canReadOperations() {
+      return activeUser() && (supportedRole(currentUser().data.role) || isAdmin());
+    }
+    function finiteStock(n) {
+      return n is number && n >= -1000000000000000 && n <= 1000000000000000;
+    }
+    function validInventory(id, d) {
+      return actualReference(d) && d.id == id && d.name is string && d.name.size() > 0
+        && d.itemKey is string && d.itemKey.size() > 0
+        && d.moduleType in ['', 'ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.category is string && d.category.size() > 0
+        && d.unit is string && d.unit.size() > 0
+        && finiteStock(d.currentStock) && finiteStock(d.minStock) && d.minStock >= 0
+        && d.isLowStock == (d.currentStock <= d.minStock)
+        && d.get('productType', 'operational') in ['operational', 'harvest']
+        && d.get('isSellable', false) is bool
+        && (d.get('isSellable', false) == false || (d.get('productType', '') == 'harvest' && d.moduleType != ''))
+        && d.isDeleted is bool && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    function pairedStock(id, d, before) {
+      let t = getAfter(/databases/$(database)/documents/inventory_transactions/$(d.lastTransactionId)).data;
+      return d.lastTransactionId is string
+        && !exists(/databases/$(database)/documents/inventory_transactions/$(d.lastTransactionId))
+        && t.itemId == id && t.beforeStock == before && t.afterStock == d.currentStock
+        && t.createdBy == request.auth.uid && t.createdAt == request.time;
+    }
+    match /inventory/{itemId} {
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && validInventory(itemId, request.resource.data)
+        && createsOwnDocument(itemId) && request.resource.data.createdAt == request.time
+        && (request.resource.data.get('isSellable', false) == false || isAdmin())
+        && ((request.resource.data.currentStock == 0 && !('lastTransactionId' in request.resource.data))
+          || pairedStock(itemId, request.resource.data, 0));
+      allow update: if canManageOperations() && actualReference(resource.data) && validInventory(itemId, request.resource.data)
+        && updatesExistingDocument() && resource.data.isDeleted == false
+        && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'category', 'location', 'minStock', 'isLowStock', 'updatedBy', 'updatedAt', 'productType', 'isSellable'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['productType', 'isSellable']) || isAdmin())
+            && request.resource.data.isDeleted == false)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'currentStock', 'lastTransactionId', 'isLowStock', 'updatedBy', 'updatedAt'])
+            && pairedStock(itemId, request.resource.data, resource.data.currentStock))
+          || (isAdmin() && resource.data.currentStock == 0 && request.resource.data.isDeleted == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted', 'updatedBy', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+    function validLedgerSource(d, item) {
+      return (d.source == 'sale' && isAdmin() && validSaleLedger(d))
+        || (d.source == 'manual' && d.requestId == d.id
+          && d.type in ['in', 'out', 'correction'] && d.notes.size() > 0
+          && d.moduleType == item.moduleType && !('logbookId' in d)
+          && d.allowNegative is bool && finiteStock(d.requestedValue) && d.requestedValue >= 0
+          && (d.afterStock >= 0 || d.allowNegative == true)
+          && ((d.type == 'correction' && d.afterStock == d.requestedValue)
+            || (d.type != 'correction' && d.quantity == d.requestedValue))
+          && (!('batchId' in d) || d.batchId == null || validLogbookBatch(d)))
+        || (d.source == 'opening' && d.type == 'opening' && d.beforeStock == 0
+          && d.afterStock > 0 && d.requestId == d.itemId && d.id == 'opening_' + d.itemId
+          && !exists(/databases/$(database)/documents/inventory/$(d.itemId))
+          && d.moduleType == item.moduleType && !('logbookId' in d) && !('batchId' in d))
+        || (d.source == 'logbook' && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele'] && d.type in ['in', 'out'] && d.requestId == d.logbookId
+          && !exists(/databases/$(database)/documents/logbooks/$(d.logbookId))
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.createdAt == request.time
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.createdBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.moduleType == d.moduleType
+          && d.get('batchId', null) == getAfter(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.get('batchId', null));
+    }
+    function validLedger(id, d) {
+      let item = getAfter(/databases/$(database)/documents/inventory/$(d.itemId)).data;
+      let before = exists(/databases/$(database)/documents/inventory/$(d.itemId))
+        ? get(/databases/$(database)/documents/inventory/$(d.itemId)).data.currentStock : 0;
+      return d.keys().hasOnly(['id', 'requestId', 'itemId', 'itemName', 'itemKey', 'moduleType',
+          'type', 'quantity', 'unit', 'beforeStock', 'afterStock', 'notes', 'transactionDate',
+          'createdBy', 'createdAt', 'batchId', 'logbookId', 'source', 'isReversed',
+          'reversedAt', 'reversedBy', 'allowNegative', 'requestedValue', 'saleId'])
+        && d.id == id && d.createdBy == request.auth.uid
+        && d.createdAt == request.time && d.transactionDate == request.time
+        && d.itemName == item.name && d.itemKey == item.itemKey && d.unit == item.unit
+        && d.notes is string && d.isReversed == false
+        && d.get('reversedAt', null) == null && d.get('reversedBy', '') == ''
+        && finiteStock(d.quantity) && d.quantity >= 0
+        && finiteStock(d.beforeStock) && finiteStock(d.afterStock)
+        && d.beforeStock == before && d.afterStock == item.currentStock
+        && item.isDeleted == false && item.lastTransactionId == id && item.updatedAt == request.time
+        && ((d.type in ['in', 'opening'] && d.quantity > 0 && d.afterStock == d.beforeStock + d.quantity)
+          || (d.type == 'out' && d.quantity > 0 && d.afterStock == d.beforeStock - d.quantity)
+          || (d.type == 'correction' && d.quantity == math.abs(d.afterStock - d.beforeStock)))
+        && (d.source == 'sale' || !('saleId' in d))
+        && validLedgerSource(d, item);
+    }
+    match /inventory_transactions/{transactionId} {
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && validLedger(transactionId, request.resource.data);
+      allow update, delete: if false;
+    }
+
+    /*
+      PRODUCTION RESULTS
+      Hasil produksi/panen yang berasal dari logbook.
+    */
+    match /production_results/{resultId} {
+      allow read: if canViewAppData();
+      allow create: if isAdmin()
+        || (
+          canManageOperations()
+          && request.resource.data.id == resultId
+          && request.resource.data.createdBy == request.auth.uid
+        );
+      allow update, delete: if false;
+    }
+
+    /*
+      CIRCULAR FLOWS
+      Data aliran nutrisi dashboard. Semua user aktif bisa baca,
+      admin/operator lapangan bisa tambah data operasional.
+    */
+    function flowBatch(id, moduleType) {
+      return exists(/databases/$(database)/documents/batches/$(id))
+        && actualReference(get(/databases/$(database)/documents/batches/$(id)).data)
+        && get(/databases/$(database)/documents/batches/$(id)).data.isDeleted == false
+        && get(/databases/$(database)/documents/batches/$(id)).data.moduleType == moduleType;
+    }
+    function validFlow(id, d) {
+      return d.keys().hasOnly(['id', 'requestId', 'creationPayload', 'sourceModuleType',
+          'destinationModuleType', 'materialName', 'quantity', 'unit', 'flowDate',
+          'sourceBatchId', 'destinationBatchId', 'logbookId', 'inventoryTransactionId',
+          'sourceType', 'notes', 'createdBy', 'createdByName', 'createdAt'])
+        && d.id == id && d.requestId == id && d.creationPayload is string
+        && d.sourceModuleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.destinationModuleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.sourceModuleType != d.destinationModuleType
+        && d.materialName is string && d.materialName.size() > 0
+        && finiteStock(d.quantity) && d.quantity > 0 && d.quantity <= 1000000000000
+        && d.unit in ['kg', 'g', 'liter', 'ml', 'butir', 'ekor'] && d.flowDate is timestamp
+        && d.flowDate >= timestamp.date(2020, 1, 1) && d.flowDate <= timestamp.date(2100, 12, 31)
+        && (!('createdByName' in d) || d.createdByName == currentUser().data.get('name', 'Pengguna SeiCycle'))
+        && d.sourceType == 'manual' && d.notes is string
+        && d.createdBy == request.auth.uid && d.createdAt == request.time
+        && (!('sourceBatchId' in d) || flowBatch(d.sourceBatchId, d.sourceModuleType))
+        && (!('destinationBatchId' in d) || flowBatch(d.destinationBatchId, d.destinationModuleType))
+        && (!('logbookId' in d) ||
+          (get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.isDeleted == false
+            && actualReference(get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data)
+            && get(/databases/$(database)/documents/logbooks/$(d.logbookId)).data.moduleType in [d.sourceModuleType, d.destinationModuleType]))
+        && (!('inventoryTransactionId' in d) || validFlowLedger(d));
+    }
+    function validFlowLedger(d) {
+      let ledger = get(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId)).data;
+      return ledger.moduleType in [d.sourceModuleType, d.destinationModuleType]
+        && actualReference(ledger)
+        && ledger.unit == d.unit && ledger.quantity == d.quantity && ledger.isReversed == false;
+    }
+    match /circular_flows/{flowId} {
+      allow read: if canViewAppData();
+      allow create: if canManageOperations() && validFlow(flowId, request.resource.data);
+      allow update, delete: if false;
+    }
+
+    /*
+      SCHEDULES / KALENDER OPERASIONAL
+    */
+    function validSchedule(id, d) {
+      return d.id == id && d.title is string && d.title.size() > 0
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && d.type is string && d.type.size() > 0 && d.date is timestamp
+        && d.notes is string && d.status in ['pending', 'done', 'skipped']
+        && d.isDeleted is bool && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    function validScheduleBatch(d) {
+      return !('batchId' in d) || d.batchId == null || validLogbookBatch(d);
+    }
+    match /schedules/{scheduleId} {
+      allow read: if canReadOperations();
+      allow create: if canManageOperations() && createsOwnDocument(scheduleId)
+        && validSchedule(scheduleId, request.resource.data) && validScheduleBatch(request.resource.data)
+        && request.resource.data.keys().hasOnly(['id', 'title', 'moduleType', 'type', 'date',
+          'status', 'notes', 'batchId', 'isDeleted', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'creationPayload'])
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time;
+      allow update: if canManageOperations() && updatesExistingDocument()
+        && resource.data.isDeleted == false && resource.data.status == 'pending'
+        && validSchedule(scheduleId, request.resource.data)
+        && (
+          (request.resource.data.status == 'pending' && request.resource.data.isDeleted == false
+            && validScheduleBatch(request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title', 'moduleType', 'type', 'date', 'notes', 'batchId', 'updatedBy', 'updatedAt']))
+          || (request.resource.data.status == 'done'
+            && request.resource.data.completedBy == request.auth.uid && request.resource.data.completedAt == request.time
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'completedBy', 'completedAt', 'updatedBy', 'updatedAt']))
+          || (request.resource.data.status == 'skipped'
+            && request.resource.data.skippedBy == request.auth.uid && request.resource.data.skippedAt == request.time
+            && request.resource.data.skipReason is string
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'skippedBy', 'skippedAt', 'skipReason', 'updatedBy', 'updatedAt']))
+          || (isAdmin() && request.resource.data.isDeleted == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted', 'updatedBy', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    /*
+      EDUKASI
+      Semua user login bisa lihat tampilan edukasi.
+      Hanya admin yang bisa lihat dan kelola semua status.
+    */
+    function validEducationAudit(contentId, afterData) {
+      let editId = afterData.lastEditId;
+      let audit = getAfter(/databases/$(database)/documents/education_edits/$(editId)).data;
+      return !exists(/databases/$(database)/documents/education_edits/$(editId))
+        && audit.targetId == contentId && audit.actorUid == request.auth.uid
+        && audit.createdAt == request.time && audit.after == afterData
+        && afterData.updatedAt == request.time && afterData.updatedBy == request.auth.uid;
+    }
+    match /education_contents/{contentId} {
+      allow read: if isAdmin() || (activeUser() && resource.data.status == 'published' && resource.data.get('isDeleted', false) != true);
+      allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time && actualReference(request.resource.data)
+        && validEducationAudit(contentId, request.resource.data)
+        && getAfter(/databases/$(database)/documents/education_edits/$(request.resource.data.lastEditId)).data.before == null;
+      allow update: if isAdmin() && validEducationAudit(contentId, request.resource.data)
+        && getAfter(/databases/$(database)/documents/education_edits/$(request.resource.data.lastEditId)).data.before == resource.data;
+      allow delete: if false;
+    }
+    match /education_edits/{editId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.keys().hasOnly(['targetId','actorUid','requestId','operation','before','after','createdAt'])
+        && request.resource.data.requestId == editId && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.after == getAfter(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)).data
+        && request.resource.data.after.lastEditId == editId
+        && ((!exists(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)) && request.resource.data.before == null)
+          || request.resource.data.before == get(/databases/$(database)/documents/education_contents/$(request.resource.data.targetId)).data);
+      allow update, delete: if false;
+    }
+
+    /*
+      FINANCE
+      Collection branch backend: finance_transactions
+      Hanya admin aktif dan operator keuangan aktif boleh membaca/menulis.
+      Pembatasan berlaku juga bagi query SDK langsung.
+    */
+    function manualFinance(d) {
+      return d.get('source', 'manual') == 'manual' && d.get('saleId', '') == '';
+    }
+    function validFinanceEdit(id, d) {
+      let audit = getAfter(/databases/$(database)/documents/finance_transactions/$(id)/edits/$(d.lastEditId)).data;
+      return !exists(/databases/$(database)/documents/finance_transactions/$(id)/edits/$(d.lastEditId))
+        && audit.before == resource.data && audit.after == d
+        && audit.editedBy == request.auth.uid && audit.editedAt == request.time;
+    }
+    match /finance_transactions/{transactionId} {
+      allow read: if canManageFinance();
+      allow create: if canManageFinance() && validFinanceTransaction(transactionId, request.resource.data)
+        && createsOwnDocument(transactionId) && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && ((manualFinance(request.resource.data)
+              && request.resource.data.requestId == transactionId
+              && request.resource.data.creationPayload is string
+              && request.resource.data.version == 0
+              && !('lastEditId' in request.resource.data)
+              && !('sampleVersion' in request.resource.data)
+              && request.resource.data.get('isSampleData', false) == false)
+          || (isAdmin() && validSaleFinance(transactionId, request.resource.data)));
+      allow update: if canManageFinance() && manualFinance(resource.data)
+        && resource.data.isDeleted == false && manualFinance(request.resource.data)
+        && updatesExistingDocument() && validFinanceTransaction(transactionId, request.resource.data)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.version == resource.data.get('version', 0) + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'type', 'category', 'amount', 'date', 'description', 'notes', 'paymentMethod',
+          'moduleType', 'isDeleted', 'updatedBy', 'updatedAt', 'version', 'lastEditId'])
+        && validFinanceEdit(transactionId, request.resource.data);
+      allow delete: if false;
+      match /edits/{editId} {
+        allow read: if canManageFinance();
+        allow create: if canManageFinance()
+          && request.resource.data.keys().hasOnly(['before', 'after', 'payload', 'editedBy', 'editedAt'])
+          && request.resource.data.editedBy == request.auth.uid
+          && request.resource.data.editedAt == request.time && request.resource.data.payload is string
+          && manualFinance(request.resource.data.before) && manualFinance(request.resource.data.after)
+          && request.resource.data.after.updatedAt == request.time
+          && request.resource.data.after.updatedBy == request.auth.uid
+          && request.resource.data.after.version == request.resource.data.before.get('version', 0) + 1
+          && request.resource.data.before == get(/databases/$(database)/documents/finance_transactions/$(transactionId)).data
+          && request.resource.data.after == getAfter(/databases/$(database)/documents/finance_transactions/$(transactionId)).data
+          && getAfter(/databases/$(database)/documents/finance_transactions/$(transactionId)).data.lastEditId == editId;
+        allow update, delete: if false;
+      }
+    }
+
+    // All four edges validate their own state and the new linked receipt.
+    function freshSale(id) {
+      return !exists(/databases/$(database)/documents/sales/$(id))
+        && getAfter(/databases/$(database)/documents/sales/$(id)).data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/sales/$(id)).data.createdBy == request.auth.uid;
+    }
+    function validSaleLedger(d) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(d.saleId)).data;
+      return freshSale(d.saleId) && d.id == 'sale_' + d.saleId && d.requestId == d.saleId
+        && d.type == 'out' && d.source == 'sale' && d.afterStock >= 0
+        && d.itemId == sale.inventoryItemId && d.quantity == sale.quantity
+        && d.moduleType == sale.moduleType && d.unit == sale.unit
+        && sale.inventoryTransactionId == d.id && !('batchId' in d) && !('logbookId' in d)
+        && !('allowNegative' in d) && !('requestedValue' in d);
+    }
+    function validSaleFinance(id, d) {
+      let sale = getAfter(/databases/$(database)/documents/sales/$(d.saleId)).data;
+      return freshSale(d.saleId) && id == 'sale_' + d.saleId && d.requestId == d.saleId
+        && d.source == 'sale' && d.type == 'income' && d.isDeleted == false
+        && d.amount == sale.totalAmount && d.category == 'Penjualan hasil panen'
+        && d.moduleType == sale.moduleType && d.date == sale.saleDate
+        && d.paymentMethod == sale.paymentMethod && sale.financeTransactionId == id
+        && d.version == 0 && !('lastEditId' in d) && !('creationPayload' in d)
+        && d.get('isSampleData', false) == false;
+    }
+    function validSale(id, d) {
+      let before = get(/databases/$(database)/documents/inventory/$(d.inventoryItemId)).data;
+      let item = getAfter(/databases/$(database)/documents/inventory/$(d.inventoryItemId)).data;
+      let ledger = getAfter(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId)).data;
+      let finance = getAfter(/databases/$(database)/documents/finance_transactions/$(d.financeTransactionId)).data;
+      return d.keys().hasOnly(['id', 'requestId', 'saleNumber', 'creationPayload',
+          'inventoryItemId', 'productName', 'moduleType', 'quantity', 'quantityMilli', 'unit',
+          'unitPrice', 'totalAmount', 'buyerName', 'paymentMethod', 'saleDate', 'notes', 'status',
+          'inventoryTransactionId', 'financeTransactionId', 'createdBy', 'createdByName', 'updatedBy', 'createdAt', 'updatedAt'])
+        && (!('createdByName' in d) || d.createdByName == currentUser().data.get('name', request.auth.uid))
+        && d.id == id && d.requestId == id && d.saleNumber == 'S-' + id && d.creationPayload is string
+        && d.inventoryTransactionId == 'sale_' + id && d.financeTransactionId == 'sale_' + id
+        && !exists(/databases/$(database)/documents/inventory_transactions/$(d.inventoryTransactionId))
+        && !exists(/databases/$(database)/documents/finance_transactions/$(d.financeTransactionId))
+        && d.createdBy == request.auth.uid && d.updatedBy == request.auth.uid
+        && d.createdAt == request.time && d.updatedAt == request.time && d.status == 'paid'
+        && d.saleDate is timestamp && d.saleDate >= timestamp.date(2020, 1, 1) && d.saleDate <= timestamp.date(2100, 12, 31)
+        && d.paymentMethod in ['tunai', 'transfer', 'qris'] && d.buyerName is string && d.notes is string
+        && d.quantityMilli is int && d.quantityMilli > 0 && d.quantityMilli <= 1000000000
+        && d.quantity == d.quantityMilli / 1000.0
+        && d.unitPrice is int && d.unitPrice > 0 && d.unitPrice <= 1000000000
+        && d.totalAmount is int && d.totalAmount > 0 && d.totalAmount <= 1000000000000
+        && d.totalAmount == int(d.quantityMilli * d.unitPrice / 1000.0 + 0.5)
+        && d.productName == before.name && d.unit == before.unit && d.moduleType == before.moduleType
+        && d.moduleType in ['ayam_kampung', 'maggot_bsf', 'cacing_tanah', 'tanaman', 'lele']
+        && before.isDeleted == false && before.isSellable == true && before.productType == 'harvest'
+        && actualReference(before)
+        && before.currentStock >= d.quantity && item.currentStock == before.currentStock - d.quantity
+        && item.lastTransactionId == d.inventoryTransactionId && item.updatedAt == request.time
+        && ledger.saleId == id && ledger.source == 'sale' && ledger.quantity == d.quantity
+        && finance.saleId == id && finance.source == 'sale' && finance.amount == d.totalAmount;
+    }
+    match /sales/{saleId} {
+      allow read: if canManageFinance();
+      allow create: if isAdmin() && validSale(saleId, request.resource.data);
+      allow update, delete: if false;
+    }
+
+    function actualReference(d) {
+      return d.get('isSampleData', false) != true && d.get('createdBy', '') != 'sample_seed'
+        && d.get('sampleVersion', '') != 'v2';
+    }
+
+    /*
+      NOTIFICATIONS
+      Semua user hanya baca notifikasi yang memang untuk dirinya/role-nya.
+      Admin bisa baca dan hapus semua.
+    */
+    match /notifications/{notificationId} {
+      allow read: if canReadNotification(resource.data);
+
+      allow create: if isAdmin()
+        || userCanCreateOwnNotification(notificationId)
+        || adminCanCreateSystemNotification(notificationId);
+
+      allow update: if (
+          activeUser() && resource.data.userId == request.auth.uid
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'isRead',
+            'readAt'
+          ])
+        ) || userCanRefreshOwnNotification();
+
+      allow update: if canReadNotification(resource.data)
+        && (
+          isAdmin()
+          || resource.data.userId == request.auth.uid
+        )
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'isDeleted',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.isDeleted == true
+        && request.resource.data.updatedBy == request.auth.uid;
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+      REPORT METADATA
+      Metadata laporan/export client.
+      Admin dan operator keuangan boleh kelola.
+    */
+    // Legacy collections observed by the read-only audit. No client migration writes.
+    match /finance_records/{documentId} {
+      allow read: if canManageFinance();
+      allow write: if false;
+    }
+    match /inventory_items/{documentId} {
+      allow read: if canReadOperations();
+      allow write: if false;
+    }
+
+    match /report_metadata/{reportId} {
+      allow read: if canManageFinance();
+
+      allow create: if canManageFinance()
+        && (
+          isAdmin()
+          || createsOwnDocument(reportId)
+        );
+
+      allow update: if isAdmin()
+        || (
+          canManageFinance()
+          && updatesExistingDocument()
+          && request.resource.data.isDeleted == resource.data.isDeleted
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    /*
+      RECOMMENDATIONS
+      Hasil rule-based recommendation default dibuat on-demand di client.
+      Collection ini disiapkan untuk snapshot rekomendasi manual/admin-side.
+    */
+    match /recommendations/{recommendationId} {
+      allow read: if isAdmin() || (activeUser() && (resource.data.get('type', '') != 'finance' || canManageFinance()));
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /notification_receipts/{uid}/items/{id} {
+      allow read: if activeUser() && request.auth.uid == uid;
+      allow create, update: if activeUser() && request.auth.uid == uid
+        && canReadNotification(get(/databases/$(database)/documents/notifications/$(id)).data)
+        && request.resource.data.keys().hasOnly(['readAt'])
+        && request.resource.data.readAt == request.time;
+      allow delete: if false;
+    }
+    // Privileged mutations run only in the trusted worker; clients submit commands.
+    match /admin_requests/{requestId} {
+      allow read: if isAdmin() && resource.data.actorUid == request.auth.uid;
+      allow create: if isAdmin()
+        && requestId.matches('[A-Za-z0-9_-]{1,128}')
+        && request.resource.data.keys().hasOnly(['actorUid', 'kind', 'targetPath', 'operation', 'reason', 'patch', 'previewId', 'status', 'createdAt'])
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.kind in ['preview', 'execute']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.targetPath is string
+        && request.resource.data.operation in ['create', 'update', 'archive', 'softDelete', 'delete', 'reverse', 'deleteIdentity', 'restore']
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 5
+        && request.resource.data.reason.size() <= 1000 && request.resource.data.patch is map
+        && request.resource.data.previewId is string;
+      allow update, delete: if false;
+    }
+    match /admin_identity_jobs/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /admin_audit/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /admin_backups/{document=**} { allow read, write: if false; }
+    match /admin_tombstones/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    /*
+      Collection lain ditutup.
+      Jadi kalau ada typo nama collection, langsung ketahuan permission-denied.
+    */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

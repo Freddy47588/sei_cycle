@@ -1,0 +1,848 @@
+import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../../core/constants/farm_modules.dart';
+import '../../../core/utils/delete_confirmation.dart';
+import '../../../core/utils/operation_feedback.dart';
+import '../../../core/widgets/app_ui.dart';
+import '../../../core/widgets/async_state_widgets.dart';
+import '../../../core/widgets/feature_page.dart';
+import '../../../theme/app_theme.dart';
+import '../../profile/models/app_user.dart';
+import '../models/education_content.dart';
+import '../services/education_service.dart';
+import 'education_detail_screen.dart';
+
+class EducationScreen extends StatefulWidget {
+  const EducationScreen({
+    required this.profile,
+    this.contents,
+    this.educationService,
+    super.key,
+  });
+  final Stream<List<EducationContent>>? contents;
+  final EducationService? educationService;
+
+  final AppUser profile;
+
+  @override
+  State<EducationScreen> createState() => _EducationScreenState();
+}
+
+class _EducationScreenState extends State<EducationScreen> {
+  late final EducationService _service =
+      widget.educationService ?? EducationService();
+  String _query = '';
+  String? _type;
+  String? _moduleType;
+  String? _status;
+  int _limit = 20;
+  Stream<List<EducationContent>>? _cachedStream;
+  String _streamKey = '';
+  final _deleting = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  Stream<List<EducationContent>> _contentsStream() {
+    if (widget.contents != null) return widget.contents!;
+    final key =
+        '${widget.profile.uid}_${widget.profile.canManageEducation}_${_type}_${_moduleType}_${_status}_$_limit';
+    if (_cachedStream == null || key != _streamKey) {
+      _streamKey = key;
+      _cachedStream = _service.watchContents(
+        includeDrafts: widget.profile.canManageEducation,
+        type: _type,
+        moduleType: _moduleType,
+        status: _status,
+        limit: _limit,
+      );
+    }
+    return _cachedStream!;
+  }
+
+  Future<void> _openForm([EducationContent? content]) async {
+    if (!widget.profile.canManageEducation) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _EducationFormDialog(
+        content: content,
+        onSave: (value, requestId) async {
+          if (!mounted || !widget.profile.canManageEducation) {
+            throw StateError('Hak akses pengelolaan edukasi telah berubah.');
+          }
+          await _service.save(
+            id: content?.id,
+            requestId: requestId,
+            expectedUpdatedAt: content?.updatedAt,
+            title: value.title,
+            type: value.type,
+            content: value.content,
+            externalUrl: value.externalUrl,
+            status: value.status,
+            moduleType: value.moduleType,
+            category: content?.category ?? '',
+            tags: content?.tags ?? const [],
+            toolsNeeded: content?.toolsNeeded ?? const [],
+            safetyNotes: content?.safetyNotes ?? '',
+            duration: content?.duration ?? '',
+            thumbnailUrl: content?.thumbnailUrl ?? '',
+            userId: widget.profile.uid,
+          );
+        },
+      ),
+    );
+    if (saved != true || !mounted) return;
+    setState(() => _cachedStream = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          content == null ? 'Konten ditambahkan.' : 'Konten diperbarui.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _delete(EducationContent content) async {
+    if (!widget.profile.canDeleteEducation || !_deleting.add(content.id)) {
+      return;
+    }
+    try {
+      final confirmed = await confirmDelete(
+        context,
+        title: 'Hapus konten?',
+        message: 'Konten ${content.title} akan dihapus dari materi edukasi.',
+      );
+      if (!confirmed || !mounted || !widget.profile.canDeleteEducation) return;
+      final deleted = await runOperationWithFeedback(
+        context,
+        operation: () =>
+            _service.delete(content.id, userId: widget.profile.uid),
+        successMessage: 'Konten dihapus.',
+      );
+      if (deleted && mounted) setState(() => _cachedStream = null);
+    } finally {
+      _deleting.remove(content.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, pageConstraints) => FeaturePage(
+        title: 'Edukasi Kebun Sei',
+        subtitle: 'Artikel, tutorial, dan SOP praktis untuk tim kebun',
+        actions: [
+          if (widget.profile.canManageEducation)
+            FilledButton.icon(
+              onPressed: _openForm,
+              icon: const Icon(Icons.add),
+              label: const Text('Tambah konten'),
+            ),
+        ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                IconButton(
+                  tooltip: 'Muat ulang',
+                  onPressed: () => setState(() => _cachedStream = null),
+                  icon: const Icon(Icons.refresh),
+                ),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _limit += 20;
+                    _cachedStream = null;
+                  }),
+                  child: const Text('Muat berikutnya'),
+                ),
+              ],
+            ),
+            TextField(
+              onChanged: (value) => setState(() => _query = value),
+              decoration: const InputDecoration(
+                hintText: 'Cari artikel atau tutorial...',
+                prefixIcon: Icon(Icons.search, color: AppColors.primaryGreen),
+                fillColor: AppColors.surface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AppFilterChip(
+                      selected: _type == null && _moduleType == null,
+                      label: 'Semua',
+                      icon: Icons.school_outlined,
+                      color: AppColors.primaryGreen,
+                      onSelected: () => setState(() {
+                        _type = null;
+                        _moduleType = null;
+                      }),
+                    ),
+                  ),
+                  for (final module in FarmModules.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AppFilterChip(
+                        selected: _moduleType == module.id,
+                        label: module.name,
+                        icon: _moduleIcon(module.id),
+                        color: _moduleColor(module.id),
+                        onSelected: () =>
+                            setState(() => _moduleType = module.id),
+                      ),
+                    ),
+                  for (final type in EducationType.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AppFilterChip(
+                        selected: _type == type,
+                        label: _educationTypeLabel(type),
+                        icon: _iconForType(type),
+                        color: _colorForType(type),
+                        onSelected: () => setState(() => _type = type),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (widget.profile.canManageEducation)
+              DropdownButton<String>(
+                value: _status,
+                isExpanded: true,
+                hint: const Text('Semua status'),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('Semua status'),
+                  ),
+                  for (final status in EducationStatus.values)
+                    DropdownMenuItem(
+                      value: status,
+                      child: Text(EducationStatus.label(status)),
+                    ),
+                ],
+                onChanged: (v) => setState(() {
+                  _status = v;
+                  _limit = 20;
+                }),
+              ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: StreamBuilder<List<EducationContent>>(
+                key: ValueKey((
+                  widget.profile.uid,
+                  widget.profile.effectiveRole,
+                )),
+                stream: _contentsStream(),
+                builder: (context, snapshot) {
+                  final state = asyncSnapshotState(snapshot);
+                  if (snapshot.hasError) {
+                    return ErrorState(
+                      message: '${snapshot.error}',
+                      onRetry: () => setState(() => _cachedStream = null),
+                    );
+                  }
+                  if (state != null) return state;
+                  final query = _query.trim().toLowerCase();
+                  final contents = snapshot.requireData.where((item) {
+                    final matchesQuery =
+                        query.isEmpty ||
+                        item.title.toLowerCase().contains(query) ||
+                        item.previewText.toLowerCase().contains(query);
+                    return matchesQuery &&
+                        !item.isDeleted &&
+                        (widget.profile.canManageEducation ||
+                            item.isPublished) &&
+                        (_status == null || item.status == _status) &&
+                        (_type == null || item.type == _type) &&
+                        (_moduleType == null || item.moduleType == _moduleType);
+                  }).toList();
+                  if (contents.isEmpty) {
+                    return Center(
+                      child: SingleChildScrollView(
+                        child: EmptyState(
+                          title:
+                              _query.isEmpty &&
+                                  _type == null &&
+                                  _moduleType == null
+                              ? 'Belum ada materi edukasi'
+                              : 'Materi tidak ditemukan',
+                          message: _query.isEmpty
+                              ? 'Panduan akan muncul setelah admin menerbitkan konten pertama.'
+                              : 'Coba gunakan kata kunci lain atau ubah filter pencarian.',
+                          icon: Icons.school_outlined,
+                        ),
+                      ),
+                    );
+                  }
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 900
+                          ? 3
+                          : pageConstraints.maxWidth >=
+                                AppBreakpoints.formColumns
+                          ? 2
+                          : 1;
+                      return GridView.builder(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 20,
+                          mainAxisSpacing: 20,
+                          mainAxisExtent:
+                              360 +
+                              (MediaQuery.textScalerOf(context).scale(1) - 1) *
+                                  160,
+                        ),
+                        itemCount: contents.length,
+                        itemBuilder: (context, index) {
+                          return _EducationCard(
+                            content: contents[index],
+                            canEdit: widget.profile.canManageEducation,
+                            canDelete: widget.profile.canDeleteEducation,
+                            onOpen: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => EducationDetailScreen(
+                                  content: contents[index],
+                                ),
+                              ),
+                            ),
+                            onEdit: () => _openForm(contents[index]),
+                            onDelete: () => _delete(contents[index]),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EducationCard extends StatelessWidget {
+  const _EducationCard({
+    required this.content,
+    required this.canEdit,
+    required this.canDelete,
+    required this.onOpen,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final EducationContent content;
+  final bool canEdit;
+  final bool canDelete;
+  final VoidCallback onOpen;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _colorForType(content.type);
+    return GestureDetector(
+      onTap: onOpen,
+      child: AppCard(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 150,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _EducationImage(content: content),
+                  if (content.type == EducationType.video)
+                    const Center(
+                      child: CircleAvatar(
+                        backgroundColor: Colors.black45,
+                        foregroundColor: Colors.white,
+                        radius: 22,
+                        child: Icon(Icons.play_arrow_rounded, size: 32),
+                      ),
+                    ),
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Text(
+                        _educationTypeLabel(content.type),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _educationCategory(content),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _moduleColor(content.moduleType),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      content.displayTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: Text(
+                        content.previewText,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(
+                          _iconForType(content.type),
+                          size: 17,
+                          color: AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            content.type == EducationType.video
+                                ? 'Buka video'
+                                : 'Baca ${_educationTypeLabel(content.type)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(color: AppColors.textMuted),
+                          ),
+                        ),
+                        if (canEdit || canDelete)
+                          PopupMenuButton<String>(
+                            tooltip: 'Opsi konten',
+                            icon: const Icon(Icons.more_vert_rounded, size: 20),
+                            onSelected: (value) {
+                              if (value == 'edit') onEdit();
+                              if (value == 'delete') onDelete();
+                            },
+                            itemBuilder: (_) => [
+                              if (canEdit)
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Text('Edit konten'),
+                                ),
+                              if (canDelete)
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('Hapus konten'),
+                                ),
+                            ],
+                          )
+                        else
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: AppColors.primaryGreen,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EducationImage extends StatelessWidget {
+  const _EducationImage({required this.content});
+
+  final EducationContent content;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _educationAsset(content);
+    if (content.thumbnailUrl.isNotEmpty) {
+      return Image.network(
+        content.thumbnailUrl,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : const ColoredBox(
+                color: AppColors.surfaceVariant,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+        errorBuilder: (_, _, _) => Image.asset(
+          fallback,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const Icon(
+            Icons.image_not_supported_outlined,
+            color: AppColors.textMuted,
+          ),
+        ),
+      );
+    }
+    return Image.asset(fallback, fit: BoxFit.cover);
+  }
+}
+
+String _educationAsset(EducationContent content) {
+  if (content.type == EducationType.video && content.moduleType == 'lele') {
+    return 'lib/assets/edukasi/lele_bioflok.png';
+  }
+  return switch (content.moduleType) {
+    'ayam_kampung' => 'lib/assets/edukasi/ayam_pakan.png',
+    'maggot_bsf' => 'lib/assets/edukasi/maggot_bsf.png',
+    'cacing_tanah' =>
+      content.type == EducationType.video
+          ? 'lib/assets/edukasi/panen_kascing.png'
+          : 'lib/assets/edukasi/cacing_media.png',
+    'lele' => 'lib/assets/edukasi/lele_fcr.png',
+    'tanaman' => 'lib/assets/edukasi/tanaman_kangkung.png',
+    _ => 'lib/assets/edukasi/siklus_nutrisi.png',
+  };
+}
+
+String _educationCategory(EducationContent content) {
+  if (content.moduleType.isNotEmpty) {
+    return FarmModules.nameOf(content.moduleType).toUpperCase();
+  }
+  return EducationType.label(content.type).toUpperCase();
+}
+
+String _educationTypeLabel(String type) => switch (type) {
+  EducationType.video => 'Video Tutorial',
+  EducationType.sop => 'SOP',
+  _ => 'Artikel',
+};
+
+Color _moduleColor(String moduleType) => switch (moduleType) {
+  'ayam_kampung' => AppColors.warning,
+  'maggot_bsf' => AppColors.accentBrown,
+  'cacing_tanah' => AppColors.primaryGreen,
+  'lele' => AppColors.info,
+  'tanaman' => AppColors.success,
+  _ => AppColors.primaryGreen,
+};
+
+IconData _moduleIcon(String moduleType) => switch (moduleType) {
+  'ayam_kampung' => Icons.egg_alt_outlined,
+  'maggot_bsf' => Icons.pest_control_outlined,
+  'cacing_tanah' => Icons.grass_outlined,
+  'lele' => Icons.water_drop_outlined,
+  'tanaman' => Icons.eco_outlined,
+  _ => Icons.category_outlined,
+};
+
+IconData _iconForType(String type) => switch (type) {
+  EducationType.video => Icons.ondemand_video_outlined,
+  EducationType.sop => Icons.fact_check_outlined,
+  _ => Icons.article_outlined,
+};
+
+Color _colorForType(String type) => switch (type) {
+  EducationType.video => AppColors.info,
+  EducationType.sop => AppColors.accentBrown,
+  _ => AppColors.primaryGreen,
+};
+
+class _EducationFormValue {
+  const _EducationFormValue({
+    required this.title,
+    required this.type,
+    required this.content,
+    required this.externalUrl,
+    required this.status,
+    required this.moduleType,
+  });
+
+  final String title;
+  final String type;
+  final String content;
+  final String externalUrl;
+  final String status;
+  final String moduleType;
+}
+
+class _EducationFormDialog extends StatefulWidget {
+  const _EducationFormDialog({required this.onSave, this.content});
+
+  final EducationContent? content;
+  final Future<void> Function(_EducationFormValue value, String requestId)
+  onSave;
+
+  @override
+  State<_EducationFormDialog> createState() => _EducationFormDialogState();
+}
+
+class _EducationFormDialogState extends State<_EducationFormDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _title;
+  late final TextEditingController _content;
+  late final TextEditingController _url;
+  late String _type;
+  late String _status;
+  String? _moduleType;
+  final _requestId = const Uuid().v4();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _title = TextEditingController(text: widget.content?.title);
+
+    // Reverse logic for content based on type for the simple form
+    String initialContent = widget.content?.content ?? '';
+    if (widget.content?.type == EducationType.sop &&
+        widget.content!.steps.isNotEmpty) {
+      initialContent = widget.content!.steps.join('\n');
+    }
+    _content = TextEditingController(text: initialContent);
+    _url = TextEditingController(text: widget.content?.videoUrl);
+    _type = widget.content?.type ?? EducationType.article;
+    _status = widget.content?.status ?? EducationStatus.draft;
+    _moduleType = (widget.content?.moduleType.isNotEmpty ?? false)
+        ? widget.content!.moduleType
+        : null;
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _content.dispose();
+    _url.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_saving) return;
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(
+        _EducationFormValue(
+          title: _title.text,
+          type: _type,
+          content: _content.text,
+          externalUrl: _url.text,
+          status: _status,
+          moduleType: _moduleType ?? '',
+        ),
+        _requestId,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) setState(() => _error = 'Konten gagal disimpan: $error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_saving,
+      child: AppDialogShell(
+        title: widget.content == null ? 'Tambah Edukasi' : 'Edit Edukasi',
+        maxWidth: 560,
+        content: AbsorbPointer(
+          absorbing: _saving,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                TextFormField(
+                  key: const ValueKey('education-title'),
+                  controller: _title,
+                  decoration: const InputDecoration(labelText: 'Judul'),
+                  validator: _required,
+                ),
+                const SizedBox(height: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey('education-type'),
+                      isExpanded: true,
+                      initialValue: _type,
+                      decoration: const InputDecoration(labelText: 'Tipe'),
+                      items: [
+                        for (final type in EducationType.values)
+                          DropdownMenuItem(
+                            value: type,
+                            child: Text(
+                              EducationType.label(type),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => _type = value!),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String?>(
+                      key: const ValueKey('education-module'),
+                      isExpanded: true,
+                      initialValue: _moduleType,
+                      decoration: const InputDecoration(
+                        labelText: 'Modul (Opsional)',
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('Umum'),
+                        ),
+                        for (final module in FarmModules.values)
+                          DropdownMenuItem(
+                            value: module.id,
+                            child: Text(
+                              module.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        if (_moduleType != null &&
+                            !FarmModules.values.any(
+                              (module) => module.id == _moduleType,
+                            ))
+                          DropdownMenuItem(
+                            value: _moduleType,
+                            child: Text(
+                              _moduleType!,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) => setState(() => _moduleType = value),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const ValueKey('education-content'),
+                  controller: _content,
+                  maxLines: 7,
+                  decoration: InputDecoration(
+                    labelText: _type == EducationType.sop
+                        ? 'Langkah SOP (pisahkan dengan enter)'
+                        : 'Isi konten/deskripsi',
+                  ),
+                  validator: _required,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const ValueKey('education-url'),
+                  controller: _url,
+                  validator: (value) =>
+                      _type == EducationType.video &&
+                          !isSafeEducationUrl(value ?? '')
+                      ? 'Masukkan URL video HTTPS yang valid.'
+                      : null,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'URL video HTTPS',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('education-status'),
+                  isExpanded: true,
+                  initialValue: _status,
+                  decoration: const InputDecoration(
+                    labelText: 'Status Publikasi',
+                  ),
+                  items: [
+                    for (final status in EducationStatus.values)
+                      DropdownMenuItem(
+                        value: status,
+                        child: Text(
+                          EducationStatus.label(status),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() => _status = value!),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: Text(_saving ? 'Menyimpan...' : 'Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String? _required(String? value) =>
+    value == null || value.trim().isEmpty ? 'Wajib diisi' : null;

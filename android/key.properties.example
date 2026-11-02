@@ -1,0 +1,7 @@
+# Copy to ignored android/key.properties and fill locally; never commit it.
+# storeFile resolves relative to android/, or accepts an absolute path.
+# On Windows use forward slashes. Environment variables can override each value.
+storeFile=
+storePassword=
+keyAlias=
+keyPassword=

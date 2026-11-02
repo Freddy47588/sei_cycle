@@ -26,3 +26,8 @@ linter:
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
+
+# Generated JavaScript dependencies are not application Dart source.
+analyzer:
+  exclude:
+    - '**/node_modules/**'
